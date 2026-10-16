@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>Fonts/THSarabunNew/THSarabunNew Bold.ttf</file>
+        <file>Fonts/DejaVu/DejaVuSans-Bold.ttf</file>
+    </qresource>
+</RCC>

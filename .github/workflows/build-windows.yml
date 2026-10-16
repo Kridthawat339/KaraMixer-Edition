@@ -1,0 +1,105 @@
+name: Build KaraMixer Edition installer (Windows x64 + x86 (32-bit))
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write   # needed to attach the installer to a GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            qtarch: win64_msvc2019_64
+          - arch: x86
+            qtarch: win32_msvc2019
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 5.15.2 (MSVC 2019 ${{ matrix.arch }})
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: windows
+          target: desktop
+          arch: ${{ matrix.qtarch }}
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Build VSTChecker
+        shell: cmd
+        run: |
+          mkdir build-vstchecker
+          cd build-vstchecker
+          qmake ..\3rdParty\VSTChecker\VSTChecker.pro CONFIG+=release
+          nmake
+
+      - name: Build KaraMixer Edition
+        shell: cmd
+        run: |
+          mkdir build-mixer
+          cd build-mixer
+          qmake ..\KaraMixer.pro CONFIG+=release
+          nmake
+
+      - name: Compile translations
+        shell: cmd
+        run: lrelease languages\en.ts -qm languages\en.qm
+
+      - name: Collect files (windeployqt + BASS)
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $d = "deploy\$arch"
+          $sub = if ($arch -eq "x64") { "x64\" } else { "" }
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item build-mixer\release\KaraMixer.exe $d
+          Copy-Item (Get-ChildItem -Recurse build-vstchecker -Filter "VSTChecker_$arch.exe" | Select-Object -First 1).FullName $d
+          $libs = @("bass24\bass.dll","bass_fx24\bass_fx.dll","bass_vst24\bass_vst.dll","bassmidi24\bassmidi.dll","bassmix24\bassmix.dll","bassasio14\bassasio.dll")
+          foreach ($l in $libs) {
+            $parts = $l.Split("\")
+            Copy-Item ("BASS\" + $parts[0] + "\" + $sub + $parts[1]) $d
+          }
+          New-Item -ItemType Directory -Force "$d\languages" | Out-Null
+          Copy-Item languages\en.qm "$d\languages"
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$d\KaraMixer.exe"
+          Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.$arch.exe" -OutFile "deploy\VC_redist.$arch.exe"
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=2.0" "_iss_setup\karamixer-${{ matrix.arch }}.iss"
+
+      # Artifact storage of the account can be full: do not fail the build because of it
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: KaraMixer-setup-${{ matrix.arch }}
+          path: dist\*.exe
+          retention-days: 1
+
+      # Installer goes to the Releases page (does not use the Actions artifact quota)
+      - name: Attach installer to a GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "build-${{ github.run_number }}"
+          gh release create $tag --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease --title "Build ${{ github.run_number }}" --notes "Automatic build of commit ${{ github.sha }}" 2>$null
+          $global:LASTEXITCODE = 0   # the other architecture's job may have created it already
+          Get-ChildItem dist\*.exe | ForEach-Object {
+            gh release upload $tag $_.FullName --repo "${{ github.repository }}" --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
