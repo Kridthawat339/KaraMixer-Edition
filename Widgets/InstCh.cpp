@@ -64,7 +64,7 @@ static QString revCaptionText(int v)
 // Trim read-out: sign, one decimal, always Western digits
 static QString trimText(double db)
 {
-    return (db > 0.0 ? QStringLiteral("+") : QString()) + QLocale::c().toString(db, 'f', 1) + QStringLiteral(" dB");
+    return (db > 0.0 ? QStringLiteral("+") : QString()) + QLocale::c().toString(db, 'f', 1);   // no unit: the strip is narrow
 }
 
 static QString revText(int v)
@@ -218,13 +218,13 @@ InstCh::InstCh(QWidget *parent) :
         {
             const QString tb =
                 "QPushButton { background: transparent; color: #4f8cff; border: 1px solid #3b8cff;"
-                " border-radius: 4px; font-weight: bold; font-size: 8pt; padding: 0px; }"
+                " border-radius: 4px; font-weight: bold; font-size: 7pt; padding: 0px; margin: 0px; min-width: 0px; }"
                 "QPushButton:hover { border: 1px solid #7fb0ff; color: #7fb0ff; }"
                 "QPushButton:pressed { background: #3b8cff; color: #ffffff; }";
             QWidget *tr = new QWidget(row);
             QHBoxLayout *th = new QHBoxLayout(tr);
             th->setContentsMargins(0, 2, 0, 0);
-            th->setSpacing(2);
+            th->setSpacing(1);
             QPushButton *dn = new QPushButton(QStringLiteral("-"), tr);
             QPushButton *up = new QPushButton(QStringLiteral("+"), tr);
             lbTrim = new QPushButton(trimText(0.0), tr);
@@ -234,9 +234,11 @@ InstCh::InstCh(QWidget *parent) :
                 b->setFixedHeight(18);
                 b->setStyleSheet(tb);
             }
-            dn->setFixedWidth(18);
-            up->setFixedWidth(18);
-            lbTrim->setMinimumWidth(40);
+            dn->setFixedWidth(16);
+            up->setFixedWidth(16);
+            lbTrim->setMinimumWidth(0);
+            lbTrim->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);   // takes what is left between - and +
+            tr->setMinimumWidth(0);
             dn->setAutoRepeat(true);
             up->setAutoRepeat(true);
             dn->setAutoRepeatDelay(350);
@@ -245,7 +247,7 @@ InstCh::InstCh(QWidget *parent) :
             up->setAutoRepeatInterval(60);
             dn->setToolTip(QString::fromUtf8("Trim ลดลง 0.1 dB (กดค้างเพื่อลดต่อเนื่อง)"));
             up->setToolTip(QString::fromUtf8("Trim เพิ่มขึ้น 0.1 dB (กดค้างเพื่อเพิ่มต่อเนื่อง)"));
-            lbTrim->setToolTip(QString::fromUtf8("Trim: ปรับความดังละเอียดของช่องนี้ (-12 ถึง +12 dB)\nคลิกที่ตัวเลข = กลับเป็น 0"));
+            lbTrim->setToolTip(QString::fromUtf8("Trim: ปรับความดังละเอียดของช่องนี้ (หน่วย dB, -12 ถึง +12)\nคลิกที่ตัวเลข = กลับเป็น 0"));
             th->addWidget(dn);
             th->addWidget(lbTrim, 1);
             th->addWidget(up);

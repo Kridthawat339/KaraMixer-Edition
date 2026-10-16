@@ -4,8 +4,11 @@
 // KaraMixer PRO licence, tied to the machine (hardware ID).
 //   Hardware ID : 8 hex digits made from the machine's unique id (Windows MachineGuid) - shown to the user.
 //   License     : XXXX-XXXX-XXXX-XXXX = first 8 bytes of HMAC-SHA256(secret, "KMPRO|" + hardware ID).
-// The same licence works only on the machine it was made for. Licences are produced with tools/kmlicense.py
-// (same passphrase as kPassphrase below - CHANGE IT before you give the program to anybody, in both places).
+// The same licence works only on the machine it was made for. Licences are produced with kmlicense.py, which is
+// NOT part of the source tree.
+// The secret is NOT in the source code: the build script generates Widgets/km_secret.h from the KM_LIC_SECRET
+// (GitHub Actions secret / environment variable), storing it scrambled (XOR with a per-build random key). Without
+// that header the program builds as a free version only (no licence can be accepted).
 // Machines listed in kOwnerHwids (the owner's own PCs) are always unlocked.
 // Header-only, no Q_OBJECT.
 
@@ -27,10 +30,27 @@
 
 #include "Config.h"
 
+// generated at build time (never committed): KM_SECRET_LEN, kmSecretEnc[], kmSecretKey[]
+#if defined(__has_include)
+#  if __has_include("km_secret.h")
+#    include "km_secret.h"
+#    define KM_HAVE_SECRET 1
+#  endif
+#endif
+
 namespace ProLicense {
 
-// secret passphrase (must be identical in tools/kmlicense.py)
-static const char kPassphrase[] = "Buai1984";
+// the secret, unscrambled only for the moment it is needed (never stored in clear in the program)
+inline QByteArray secretBytes()
+{
+    QByteArray b;
+#ifdef KM_HAVE_SECRET
+    const int kl = int(sizeof(kmSecretKey));
+    for (int i = 0; i < int(KM_SECRET_LEN); i++)
+        b.append(char(kmSecretEnc[i] ^ kmSecretKey[i % kl] ^ static_cast<unsigned char>((i * 31 + 7) & 0xFF)));
+#endif
+    return b;
+}
 
 // hardware IDs of the owner's machines: never asked for a licence (e.g. "556BAE3D")
 inline QStringList ownerHwids()
@@ -58,7 +78,10 @@ inline QString normalize(const QString &s)
 
 inline QString licenseFor(const QString &hwid)
 {
-    const QByteArray secret = QCryptographicHash::hash(QByteArray(kPassphrase), QCryptographicHash::Sha256);
+    const QByteArray passphrase = secretBytes();
+    if (passphrase.isEmpty())
+        return QString();                        // built without a secret: no licence exists
+    const QByteArray secret = QCryptographicHash::hash(passphrase, QCryptographicHash::Sha256);
     const QByteArray mac = QMessageAuthenticationCode::hash(QByteArray("KMPRO|") + hwid.toUpper().toLatin1(), secret,
                                                             QCryptographicHash::Sha256);
     const QString hex = QString::fromLatin1(mac.left(8).toHex().toUpper());
@@ -78,7 +101,14 @@ inline QString storedLicense()
 
 inline bool isValidLicense(const QString &text)
 {
-    return normalize(text) == normalize(licenseFor(hardwareId()));
+    const QString want = normalize(licenseFor(hardwareId()));
+    const QString got = normalize(text);
+    if (want.isEmpty() || got.size() != want.size())
+        return false;
+    int diff = 0;                                // compare without stopping at the first difference
+    for (int i = 0; i < want.size(); i++)
+        diff |= (want.at(i).unicode() ^ got.at(i).unicode());
+    return diff == 0;
 }
 
 inline bool isUnlocked()
