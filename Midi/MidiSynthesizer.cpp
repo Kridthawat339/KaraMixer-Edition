@@ -398,9 +398,9 @@ class GainRamper : public QObject
 public:
     GainRamper()
     {
-        tm = new QTimer(this);
-        tm->setInterval(8);
-        connect(tm, &QTimer::timeout, this, [this]() { tick(); });
+        rampTimer = new QTimer(this);
+        rampTimer->setInterval(8);
+        connect(rampTimer, &QTimer::timeout, this, [this]() { tick(); });
     }
 
     void set(DWORD h, float target)
@@ -426,7 +426,7 @@ public:
             r.step = (target - cur) / float(kSteps);
             ramps[h] = r;
         }
-        QMetaObject::invokeMethod(this, [this]() { if (!tm->isActive()) tm->start(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, [this]() { if (!rampTimer->isActive()) rampTimer->start(); }, Qt::QueuedConnection);
     }
 
 private:
@@ -449,10 +449,10 @@ private:
                 ++it;
         }
         if (ramps.isEmpty())
-            tm->stop();
+            rampTimer->stop();
     }
 
-    QTimer *tm = nullptr;
+    QTimer *rampTimer = nullptr;
     QMutex mx;
     QHash<DWORD, Ramp> ramps;
 };
