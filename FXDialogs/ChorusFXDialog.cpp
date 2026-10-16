@@ -1,4 +1,5 @@
 #include "ChorusFXDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_ChorusFXDialog.h"
 
 ChorusFXDialog::ChorusFXDialog(QWidget *parent, ChorusFX *chorusFX) :
@@ -118,7 +119,7 @@ void ChorusFXDialog::setWetDryMix(int wetDryMix)
     ui->spinWetDryMix->setValue(wetDryMix);
 
     if (chorus != nullptr)
-        chorus->setWetDryMix(wetDryMix);
+        ParamGlide::set(this, QStringLiteral("setWetDryMix"), float(wetDryMix), [this](float v) { if (chorus) chorus->setWetDryMix(v); });
 
     connectDialAndSpin();
 }
@@ -131,7 +132,7 @@ void ChorusFXDialog::setDepth(int depth)
     ui->spinDepth->setValue(depth);
 
     if (chorus != nullptr)
-        chorus->setDepth(depth);
+        ParamGlide::set(this, QStringLiteral("setDepth"), float(depth), [this](float v) { if (chorus) chorus->setDepth(v); });
 
     connectDialAndSpin();
 }
@@ -144,7 +145,7 @@ void ChorusFXDialog::setFeedback(int feedback)
     ui->spinFeedback->setValue(feedback);
 
     if (chorus != nullptr)
-        chorus->setFeedback(feedback);
+        ParamGlide::set(this, QStringLiteral("setFeedback"), float(feedback), [this](float v) { if (chorus) chorus->setFeedback(v); });
 
     connectDialAndSpin();
 }
@@ -157,7 +158,7 @@ void ChorusFXDialog::setFrequency(int frequency)
     ui->spinFrequency->setValue(frequency);
 
     if (chorus != nullptr)
-        chorus->setFrequency(frequency);
+        ParamGlide::set(this, QStringLiteral("setFrequency"), float(frequency), [this](float v) { if (chorus) chorus->setFrequency(v); });
 
     connectDialAndSpin();
 }
@@ -170,7 +171,7 @@ void ChorusFXDialog::setDelay(int delay)
     ui->spinDelay->setValue(delay);
 
     if (chorus != nullptr)
-        chorus->setDelay(delay);
+        ParamGlide::set(this, QStringLiteral("setDelay"), float(delay), [this](float v) { if (chorus) chorus->setDelay(v); });
 
     connectDialAndSpin();
 }

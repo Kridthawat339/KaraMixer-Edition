@@ -138,6 +138,7 @@ HEADERS  += Widgets/PanKnob.h \
     Widgets/FaderSlider.h \
     Widgets/TitleBar.h \
     Widgets/DialogSkin.h \
+    Widgets/ParamGlide.h \
     Widgets/MenuIcons.h \
     Widgets/VSTLabel.h \
     Midi/HNKFile.h \

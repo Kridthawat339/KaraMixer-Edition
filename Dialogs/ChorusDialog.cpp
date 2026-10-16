@@ -1,4 +1,5 @@
 #include "ChorusDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_ChorusDialog.h"
 
 ChorusDialog::ChorusDialog(QWidget *parent, QList<ChorusFX *> choruss) :
@@ -165,7 +166,7 @@ void ChorusDialog::setWetDryMix(int wetDryMix)
 
     for (auto chorus : choruss)
         if (chorus != nullptr)
-            chorus->setWetDryMix(wetDryMix);
+            ParamGlide::set(this, QStringLiteral("setWetDryMix") + QString::number(reinterpret_cast<quintptr>(chorus)), float(wetDryMix), [chorus](float v) { chorus->setWetDryMix(v); });
 
     connectDialAndSpin();
 }
@@ -179,7 +180,7 @@ void ChorusDialog::setDepth(int depth)
 
     for (auto chorus : choruss)
         if (chorus != nullptr)
-            chorus->setDepth(depth);
+            ParamGlide::set(this, QStringLiteral("setDepth") + QString::number(reinterpret_cast<quintptr>(chorus)), float(depth), [chorus](float v) { chorus->setDepth(v); });
 
     connectDialAndSpin();
 }
@@ -193,7 +194,7 @@ void ChorusDialog::setFeedback(int feedback)
 
     for (auto chorus : choruss)
         if (chorus != nullptr)
-            chorus->setFeedback(feedback);
+            ParamGlide::set(this, QStringLiteral("setFeedback") + QString::number(reinterpret_cast<quintptr>(chorus)), float(feedback), [chorus](float v) { chorus->setFeedback(v); });
 
     connectDialAndSpin();
 }
@@ -207,7 +208,7 @@ void ChorusDialog::setFrequency(int frequency)
 
     for (auto chorus : choruss)
         if (chorus != nullptr)
-            chorus->setFrequency(frequency);
+            ParamGlide::set(this, QStringLiteral("setFrequency") + QString::number(reinterpret_cast<quintptr>(chorus)), float(frequency), [chorus](float v) { chorus->setFrequency(v); });
 
     connectDialAndSpin();
 }
@@ -221,7 +222,7 @@ void ChorusDialog::setDelay(int delay)
 
     for (auto chorus : choruss)
         if (chorus != nullptr)
-            chorus->setDelay(delay);
+            ParamGlide::set(this, QStringLiteral("setDelay") + QString::number(reinterpret_cast<quintptr>(chorus)), float(delay), [chorus](float v) { chorus->setDelay(v); });
 
     connectDialAndSpin();
 }

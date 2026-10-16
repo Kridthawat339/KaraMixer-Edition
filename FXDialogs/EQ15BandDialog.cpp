@@ -1,4 +1,5 @@
 #include "EQ15BandDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_EQ15BandDialog.h"
 
 EQ15BandDialog::EQ15BandDialog(QWidget *parent, Equalizer15BandFX *fx) :
@@ -54,7 +55,8 @@ void EQ15BandDialog::setGian(int sliderIndex)
     EQFrequency15Range freq = sliderMap.keys()[sliderIndex];
     Slider *slider = sliderMap.values()[sliderIndex];
 
-    fx->setGain(freq, slider->level() / 10.0f);
+    ParamGlide::set(this, QStringLiteral("gain") + QString::number(int(freq)), slider->level() / 10.0f,
+                    [this, freq](float v) { fx->setGain(freq, v); });
     lbdbMap[freq]->setText(QString::number(slider->level() / 10.0f, 'f', 1));
 }
 

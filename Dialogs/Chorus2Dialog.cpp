@@ -1,4 +1,5 @@
 #include "Chorus2Dialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_Chorus2Dialog.h"
 
 Chorus2Dialog::Chorus2Dialog(QWidget *parent, QList<Chorus2FX *> choruss) :
@@ -89,7 +90,7 @@ void Chorus2Dialog::on_spinDry_valueChanged(double arg1)
     ui->dialDry->setValue(arg1 * 100);
 
     for (auto cr : choruss) {
-        cr->setDryMix(arg1);
+        ParamGlide::set(this, QStringLiteral("setDryMix") + QString::number(reinterpret_cast<quintptr>(cr)), float(arg1), [cr](float v) { cr->setDryMix(v); });
     }
 }
 
@@ -105,7 +106,7 @@ void Chorus2Dialog::on_spinWet_valueChanged(double arg1)
     ui->dialWet->setValue(arg1 * 100);
 
     for (auto cr : choruss) {
-        cr->setWetMix(arg1);
+        ParamGlide::set(this, QStringLiteral("setWetMix") + QString::number(reinterpret_cast<quintptr>(cr)), float(arg1), [cr](float v) { cr->setWetMix(v); });
     }
 }
 
@@ -121,7 +122,7 @@ void Chorus2Dialog::on_spinFeedback_valueChanged(double arg1)
     ui->dialFeedback->setValue(arg1 * 100);
 
     for (auto cr : choruss) {
-        cr->setFeedback(arg1);
+        ParamGlide::set(this, QStringLiteral("setFeedback") + QString::number(reinterpret_cast<quintptr>(cr)), float(arg1), [cr](float v) { cr->setFeedback(v); });
     }
 }
 
@@ -137,7 +138,7 @@ void Chorus2Dialog::on_spinMin_valueChanged(double arg1)
     ui->dialMin->setValue(arg1);
 
     for (auto cr : choruss) {
-        cr->setMinSweep(arg1);
+        ParamGlide::set(this, QStringLiteral("setMinSweep") + QString::number(reinterpret_cast<quintptr>(cr)), float(arg1), [cr](float v) { cr->setMinSweep(v); });
     }
 }
 
@@ -153,7 +154,7 @@ void Chorus2Dialog::on_spinMax_valueChanged(double arg1)
     ui->dialMax->setValue(arg1);
 
     for (auto cr : choruss) {
-        cr->setMaxSweep(arg1);
+        ParamGlide::set(this, QStringLiteral("setMaxSweep") + QString::number(reinterpret_cast<quintptr>(cr)), float(arg1), [cr](float v) { cr->setMaxSweep(v); });
     }
 }
 
@@ -168,7 +169,7 @@ void Chorus2Dialog::on_spinRate_valueChanged(double arg1)
     ui->dialRate->setValue(arg1);
 
     for (auto cr : choruss) {
-        cr->setRate(arg1);
+        ParamGlide::set(this, QStringLiteral("setRate") + QString::number(reinterpret_cast<quintptr>(cr)), float(arg1), [cr](float v) { cr->setRate(v); });
     }
 }
 

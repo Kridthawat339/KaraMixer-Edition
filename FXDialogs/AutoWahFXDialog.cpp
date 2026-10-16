@@ -1,4 +1,5 @@
 #include "AutoWahFXDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_AutoWahFXDialog.h"
 
 
@@ -100,7 +101,7 @@ void AutoWahFXDialog::onSpinDryMixValueChanged(double arg1)
 {
     disconnectAll();
 
-    fx->setDryMix(arg1);
+    ParamGlide::set(this, QStringLiteral("setDryMix"), float(arg1), [this](float v) { if (fx) fx->setDryMix(v); });
 
     ui->dialDryMix->setValue(arg1 * 100);
 
@@ -111,7 +112,7 @@ void AutoWahFXDialog::onSpinWetMixValueChanged(double arg1)
 {
     disconnectAll();
 
-    fx->setWetMix(arg1);
+    ParamGlide::set(this, QStringLiteral("setWetMix"), float(arg1), [this](float v) { if (fx) fx->setWetMix(v); });
 
     ui->dialWetMix->setValue(arg1 * 100);
 
@@ -122,7 +123,7 @@ void AutoWahFXDialog::onSpinFeedbackValueChanged(double arg1)
 {
     disconnectAll();
 
-    fx->setFeedback(arg1);
+    ParamGlide::set(this, QStringLiteral("setFeedback"), float(arg1), [this](float v) { if (fx) fx->setFeedback(v); });
 
     ui->dialFeedback->setValue(arg1 * 100);
 
@@ -133,7 +134,7 @@ void AutoWahFXDialog::onSpinRateValueChanged(double arg1)
 {
     disconnectAll();
 
-    fx->setRate(arg1);
+    ParamGlide::set(this, QStringLiteral("setRate"), float(arg1), [this](float v) { if (fx) fx->setRate(v); });
 
     ui->dialRate->setValue(arg1 * 10);
 
@@ -144,7 +145,7 @@ void AutoWahFXDialog::onSpinRangeValueChanged(double arg1)
 {
     disconnectAll();
 
-    fx->setRange(arg1);
+    ParamGlide::set(this, QStringLiteral("setRange"), float(arg1), [this](float v) { if (fx) fx->setRange(v); });
 
     ui->dialRange->setValue(arg1 * 10);
 
@@ -155,7 +156,7 @@ void AutoWahFXDialog::onSpinFrequencyValueChanged(int arg1)
 {
     disconnectAll();
 
-    fx->setFreq((float)arg1);
+    ParamGlide::set(this, QStringLiteral("setFreq"), float((float)arg1), [this](float v) { if (fx) fx->setFreq(v); });
 
     ui->dialFrequency->setValue(arg1);
 

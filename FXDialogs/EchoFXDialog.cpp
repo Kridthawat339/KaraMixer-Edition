@@ -1,4 +1,5 @@
 #include "EchoFXDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_EchoFXDialog.h"
 
 EchoFXDialog::EchoFXDialog(QWidget *parent, EchoFX *fx) :
@@ -83,7 +84,7 @@ void EchoFXDialog::setWetDryMix(int value)
 {
     disconnectAll();
 
-    fx->setWetDryMix(value);
+    ParamGlide::set(this, QStringLiteral("setWetDryMix"), float(value), [this](float v) { if (fx) fx->setWetDryMix(v); });
 
     ui->dialWetDryMix->setValue(value);
 
@@ -94,7 +95,7 @@ void EchoFXDialog::setFeedback(int value)
 {
     disconnectAll();
 
-    fx->setFeedback(value);
+    ParamGlide::set(this, QStringLiteral("setFeedback"), float(value), [this](float v) { if (fx) fx->setFeedback(v); });
 
     ui->dialFeedback->setValue(value);
 
@@ -105,7 +106,7 @@ void EchoFXDialog::setLeftDelay(int value)
 {
     disconnectAll();
 
-    fx->setLeftDelay(value);
+    ParamGlide::set(this, QStringLiteral("setLeftDelay"), float(value), [this](float v) { if (fx) fx->setLeftDelay(v); });
 
     ui->dialLeftDelay->setValue(value);
 
@@ -116,7 +117,7 @@ void EchoFXDialog::setRightDelay(int value)
 {
     disconnectAll();
 
-    fx->setRightDelay(value);
+    ParamGlide::set(this, QStringLiteral("setRightDelay"), float(value), [this](float v) { if (fx) fx->setRightDelay(v); });
 
     ui->dialRightDelay->setValue(value);
 

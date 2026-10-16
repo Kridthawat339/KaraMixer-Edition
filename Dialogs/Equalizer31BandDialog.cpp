@@ -1,4 +1,5 @@
 #include "Equalizer31BandDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_Equalizer31BandDialog.h"
 
 
@@ -191,7 +192,8 @@ void Equalizer31BandDialog::onSliderUserLevelChanged(int sliderIndex)
     EQFrequency31Range freq = sliderMap.keys()[sliderIndex];
 
     for (auto eqfx : eqfxs)
-        eqfx->setGain(freq, slider->level() / 10.0f);
+        ParamGlide::set(this, QStringLiteral("gain") + QString::number(int(freq)) + QLatin1Char('|') + QString::number(reinterpret_cast<quintptr>(eqfx)),
+                        slider->level() / 10.0f, [eqfx, freq](float v) { eqfx->setGain(freq, v); });
 }
 
 void Equalizer31BandDialog::onSliderMouseDoubleClicked(int sliderIndex)

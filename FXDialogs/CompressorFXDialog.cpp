@@ -1,4 +1,5 @@
 #include "CompressorFXDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_CompressorFXDialog.h"
 
 CompressorFXDialog::CompressorFXDialog(QWidget *parent, CompressorFX *fx) :
@@ -88,7 +89,7 @@ void CompressorFXDialog::setGain(int gain)
 {
     disconnectAll();
 
-    fx->setGain(gain);
+    ParamGlide::set(this, QStringLiteral("setGain"), float(gain), [this](float v) { if (fx) fx->setGain(v); });
 
     ui->dialGain->setValue(gain);
 
@@ -99,7 +100,7 @@ void CompressorFXDialog::setThreshold(int threshold)
 {
     disconnectAll();
 
-    fx->setThreshold(threshold);
+    ParamGlide::set(this, QStringLiteral("setThreshold"), float(threshold), [this](float v) { if (fx) fx->setThreshold(v); });
 
     ui->dialThreshold->setValue(threshold);
 
@@ -110,7 +111,7 @@ void CompressorFXDialog::setRatio(int ratio)
 {
     disconnectAll();
 
-    fx->setRatio(ratio);
+    ParamGlide::set(this, QStringLiteral("setRatio"), float(ratio), [this](float v) { if (fx) fx->setRatio(v); });
 
     ui->dialRatio->setValue(ratio);
 
@@ -121,7 +122,7 @@ void CompressorFXDialog::setAttack(int attack)
 {
     disconnectAll();
 
-    fx->setAttack(attack);
+    ParamGlide::set(this, QStringLiteral("setAttack"), float(attack), [this](float v) { if (fx) fx->setAttack(v); });
 
     ui->dialAttack->setValue(attack);
 
@@ -132,7 +133,7 @@ void CompressorFXDialog::setRelease(int release)
 {
     disconnectAll();
 
-    fx->setRelease(release);
+    ParamGlide::set(this, QStringLiteral("setRelease"), float(release), [this](float v) { if (fx) fx->setRelease(v); });
 
     ui->dialRelease->setValue(release);
 

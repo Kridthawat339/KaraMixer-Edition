@@ -1,4 +1,5 @@
 #include "DistortionFXDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_DistortionFXDialog.h"
 
 DistortionFXDialog::DistortionFXDialog(QWidget *parent, DistortionFX *fx) :
@@ -89,7 +90,7 @@ void DistortionFXDialog::setGain(int value)
 {
     disconnectAll();
 
-    fx->setGain(value);
+    ParamGlide::set(this, QStringLiteral("setGain"), float(value), [this](float v) { if (fx) fx->setGain(v); });
 
     ui->dialGain->setValue(value);
 
@@ -100,7 +101,7 @@ void DistortionFXDialog::setEdge(int value)
 {
     disconnectAll();
 
-    fx->setEdge(value);
+    ParamGlide::set(this, QStringLiteral("setEdge"), float(value), [this](float v) { if (fx) fx->setEdge(v); });
 
     ui->dialEdge->setValue(value);
 
@@ -111,7 +112,7 @@ void DistortionFXDialog::setCF(int value)
 {
     disconnectAll();
 
-    fx->setPostEQCenterFrequency(value);
+    ParamGlide::set(this, QStringLiteral("setPostEQCenterFrequency"), float(value), [this](float v) { if (fx) fx->setPostEQCenterFrequency(v); });
 
     ui->dialCF->setValue(value);
 
@@ -122,7 +123,7 @@ void DistortionFXDialog::setFW(int value)
 {
     disconnectAll();
 
-    fx->setPostEQBandwidth(value);
+    ParamGlide::set(this, QStringLiteral("setPostEQBandwidth"), float(value), [this](float v) { if (fx) fx->setPostEQBandwidth(v); });
 
     ui->dialFW->setValue(value);
 
@@ -133,7 +134,7 @@ void DistortionFXDialog::setLow(int value)
 {
     disconnectAll();
 
-    fx->setPreLowpassCutoff(value);
+    ParamGlide::set(this, QStringLiteral("setPreLowpassCutoff"), float(value), [this](float v) { if (fx) fx->setPreLowpassCutoff(v); });
 
     ui->dialLow->setValue(value);
 

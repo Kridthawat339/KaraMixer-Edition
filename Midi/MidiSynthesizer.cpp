@@ -14,6 +14,13 @@
 #include "Midi/OutputRecorder.h"
 
 #include <cstring>
+#include <cmath>
+#include <QTimer>
+#include <QHash>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QCoreApplication>
+#include <QThread>
 #include "Midi/MidiPlayer.h"
 
 QMap<int, QString> MidiSynthesizer::outDevices;
@@ -165,7 +172,8 @@ bool MidiSynthesizer::open()
         MixerHandle mixer = mixers[i];
         // ASIO: the main mixer only decodes; BASSASIO pulls the audio from it
         const bool asioMain = (i == 0 && asioDev >= 0);
-        mixer.handle = BASS_Mixer_StreamCreate(sampleRate, 8, asioMain ? (f | BASS_STREAM_DECODE) : f);
+        // NONSTOP: a mixer with nothing in it must keep running, not end (an ended mixer never plays again)
+        mixer.handle = BASS_Mixer_StreamCreate(sampleRate, 8, (asioMain ? (f | BASS_STREAM_DECODE) : f) | BASS_MIXER_NONSTOP);
         mixer.eq->setStreamHandle(mixer.handle);
         mixer.reverb->setStreamHandle(mixer.handle);
         mixer.chorus->setStreamHandle(mixer.handle);
@@ -381,17 +389,101 @@ bool MidiSynthesizer::spectrum(float *fft1024)
 // Volume changes are glided over a few ms instead of jumping: a fader step is up to 1.2 dB below 0 dB, which
 // is audible as zipper noise / crackle while dragging. Decoding (ASIO) or stopped channels can't slide, so they
 // are set directly.
+// Decoding streams (every strip and bus is one) cannot use BASS's own attribute slide, so a fader move
+// used to jump straight to the new gain in one step (zipper noise). GainRamper glides them there in a
+// straight line (linear in gain) over ~40 ms, driven by a timer on the GUI thread.
+namespace {
+class GainRamper : public QObject
+{
+public:
+    GainRamper()
+    {
+        tm = new QTimer(this);
+        tm->setInterval(8);
+        connect(tm, &QTimer::timeout, this, [this]() { tick(); });
+    }
+
+    void set(DWORD h, float target)
+    {
+        {
+            QMutexLocker lock(&mx);
+            float cur = 0.0f;
+            if (!BASS_ChannelGetAttribute(h, BASS_ATTRIB_VOL, &cur)) {
+                ramps.remove(h);
+                return;
+            }
+            auto it = ramps.find(h);
+            if (it != ramps.end())
+                cur = it->cur;                   // continue from where the last glide got to
+            if (std::fabs(cur - target) < 0.0005f) {
+                ramps.remove(h);
+                BASS_ChannelSetAttribute(h, BASS_ATTRIB_VOL, target);
+                return;
+            }
+            Ramp r;
+            r.cur = cur;
+            r.target = target;
+            r.step = (target - cur) / float(kSteps);
+            ramps[h] = r;
+        }
+        QMetaObject::invokeMethod(this, [this]() { if (!tm->isActive()) tm->start(); }, Qt::QueuedConnection);
+    }
+
+private:
+    struct Ramp { float cur = 0, target = 0, step = 0; };
+    static const int kSteps = 5;   // x 8 ms
+
+    void tick()
+    {
+        QMutexLocker lock(&mx);
+        for (auto it = ramps.begin(); it != ramps.end(); ) {
+            Ramp &r = it.value();
+            r.cur += r.step;
+            const bool done = (r.step >= 0.0f) ? (r.cur >= r.target) : (r.cur <= r.target);
+            if (done)
+                r.cur = r.target;
+            BASS_ChannelSetAttribute(it.key(), BASS_ATTRIB_VOL, r.cur);
+            if (done)
+                it = ramps.erase(it);
+            else
+                ++it;
+        }
+        if (ramps.isEmpty())
+            tm->stop();
+    }
+
+    QTimer *tm = nullptr;
+    QMutex mx;
+    QHash<DWORD, Ramp> ramps;
+};
+
+GainRamper *gainRamper()
+{
+    static GainRamper *g = []() {
+        GainRamper *p = new GainRamper();
+        if (QCoreApplication::instance())
+            p->moveToThread(QCoreApplication::instance()->thread());
+        return p;
+    }();
+    return g;
+}
+}
+
 static void setVolSmooth(DWORD handle, float gain)
 {
     if (handle == 0)
         return;
     BASS_CHANNELINFO info;
-    const bool canSlide = BASS_ChannelGetInfo(handle, &info) && !(info.flags & BASS_STREAM_DECODE)
-                          && BASS_ChannelIsActive(handle) != BASS_ACTIVE_STOPPED;
-    if (canSlide)
-        BASS_ChannelSlideAttribute(handle, BASS_ATTRIB_VOL, gain, 30);
-    else
-        BASS_ChannelSetAttribute(handle, BASS_ATTRIB_VOL, gain);
+    if (!BASS_ChannelGetInfo(handle, &info))
+        return;
+    if (!(info.flags & BASS_STREAM_DECODE)) {
+        if (BASS_ChannelIsActive(handle) != BASS_ACTIVE_STOPPED)
+            BASS_ChannelSlideAttribute(handle, BASS_ATTRIB_VOL, gain, 30);
+        else
+            BASS_ChannelSetAttribute(handle, BASS_ATTRIB_VOL, gain);
+    } else {
+        gainRamper()->set(handle, gain);
+    }
 }
 
 void MidiSynthesizer::setVolume(float vol)
@@ -1319,15 +1411,19 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     {
         rv = new Reverb2FX(0, -100);   // lowest priority: after the channel's own FX
         rv->setDryMix(1.0f);
-        rv->setRoomSize(0.75f);
-        rv->setDamp(0.45f);
+        rv->setRoomSize(0.8f);
+        rv->setDamp(0.35f);
         rv->setWidth(1.0f);
         sendRv[t] = rv;
         if (openned)
             rv->setStreamHandle(handles.value(t, 0));
     }
 
-    rv->setWetMix(1.6f * level / 100.0f);
+    // The knob has to be clearly audible over its whole travel: the free-verb wet level goes up to 3.0
+    // (it was capped at 1.6, so even a full knob was faint), and the room grows with the knob.
+    const float k = level / 100.0f;
+    rv->setWetMix(3.0f * std::pow(k, 0.85f));
+    rv->setRoomSize(0.7f + 0.25f * k);
     rv->setDryMix(1.0f);
     rv->on();
 }
@@ -1396,9 +1492,11 @@ void MidiSynthesizer::setUseVSTi(InstrumentType t, int vstiIndex)
     int oldVstiIndex = instMap[t].vsti;
     instMap[t].vsti = vstiIndex;
 
-    if (oldVstiIndex != -1 && vstiHandle(oldVstiIndex) != 0)
+    // release the notes still held in the VSTi this strip USED to play (not the new one), otherwise
+    // they hang and ring on after the switch
+    if (oldVstiIndex != -1 && oldVstiIndex != vstiIndex && vstiHandle(oldVstiIndex) != 0)
     {
-        InstrumentType type = static_cast<InstrumentType>(vstiIndex + HANDLE_VSTI_START);
+        InstrumentType type = static_cast<InstrumentType>(oldVstiIndex + HANDLE_VSTI_START);
         for (int ch=0; ch<16; ch++)
             bv::ProcessEvent(handles[type], ch, MIDI_EVENT_NOTESOFF, 0);
     }
@@ -1414,6 +1512,12 @@ void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
 
     if (!openned)
         return;
+
+    // take the strip's fx and send reverb off the old stream first, so none of them is left running on a
+    // stream that is about to be freed
+    for (FX *fx : instMap[t].FXs)
+        fx->setStreamHandle(0);
+    attachSendReverb(t, 0);
 
     BASS_Mixer_ChannelRemove(handles[t]);
     #ifndef __linux__
@@ -1927,6 +2031,11 @@ DWORD MidiSynthesizer::setVSTiFile(int vstiIndex, const QString &file)
     if (!openned)
         return 0;
 
+    // detach the strip's fx / send reverb from the old stream before it is freed
+    for (FX *fx : instMap[t].FXs)
+        fx->setStreamHandle(0);
+    attachSendReverb(t, 0);
+
     BASS_Mixer_ChannelRemove(vsti);
     bv::ChannelFree(vsti);
 
@@ -1969,6 +2078,12 @@ void MidiSynthesizer::removeVSTiFile(int vstiIndex)
 
     InstrumentType t = static_cast<InstrumentType>(HANDLE_VSTI_START+vstiIndex);
     DWORD vsti = handles[t];
+
+    if (openned) {
+        for (FX *fx : instMap[t].FXs)
+            fx->setStreamHandle(0);
+        attachSendReverb(t, 0);
+    }
 
     BASS_Mixer_ChannelRemove(vsti);
     bv::ChannelFree(vsti);
@@ -2045,7 +2160,8 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
     else // bus stream
     {
         int chan = MidiHelper::isStereoSpeaker(instMap[t].speaker) ? 2 : 1;
-        return BASS_Mixer_StreamCreate(sampleRate, chan, f|BASS_STREAM_DECODE);
+        // NONSTOP: a bus that is empty for a moment (e.g. a VSTi is loaded into it later) must not end for good
+        return BASS_Mixer_StreamCreate(sampleRate, chan, f|BASS_STREAM_DECODE|BASS_MIXER_NONSTOP);
     }
 }
 

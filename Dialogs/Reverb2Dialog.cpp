@@ -1,4 +1,5 @@
 #include "Reverb2Dialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_Reverb2Dialog.h"
 
 Reverb2Dialog::Reverb2Dialog(QWidget *parent, QList<Reverb2FX *> reverbs) :
@@ -88,7 +89,7 @@ void Reverb2Dialog::on_spinDry_valueChanged(double arg1)
     ui->dialDry->setValue(arg1 * 100);
 
     for (auto rv : reverbs) {
-        rv->setDryMix(arg1);
+        ParamGlide::set(this, QStringLiteral("setDryMix") + QString::number(reinterpret_cast<quintptr>(rv)), float(arg1), [rv](float v) { rv->setDryMix(v); });
     }
 }
 
@@ -104,7 +105,7 @@ void Reverb2Dialog::on_spinWet_valueChanged(double arg1)
     ui->dialWet->setValue(arg1 * 100);
 
     for (auto rv : reverbs) {
-        rv->setWetMix(arg1);
+        ParamGlide::set(this, QStringLiteral("setWetMix") + QString::number(reinterpret_cast<quintptr>(rv)), float(arg1), [rv](float v) { rv->setWetMix(v); });
     }
 }
 
@@ -120,7 +121,7 @@ void Reverb2Dialog::on_spinRoom_valueChanged(double arg1)
     ui->dialRoom->setValue(arg1 * 100);
 
     for (auto rv : reverbs) {
-        rv->setRoomSize(arg1);
+        ParamGlide::set(this, QStringLiteral("setRoomSize") + QString::number(reinterpret_cast<quintptr>(rv)), float(arg1), [rv](float v) { rv->setRoomSize(v); });
     }
 }
 
@@ -136,7 +137,7 @@ void Reverb2Dialog::on_spinDamp_valueChanged(double arg1)
     ui->dialDamp->setValue(arg1 * 100);
 
     for (auto rv : reverbs) {
-        rv->setDamp(arg1);
+        ParamGlide::set(this, QStringLiteral("setDamp") + QString::number(reinterpret_cast<quintptr>(rv)), float(arg1), [rv](float v) { rv->setDamp(v); });
     }
 }
 
@@ -152,7 +153,7 @@ void Reverb2Dialog::on_spinWidth_valueChanged(double arg1)
     ui->dialWidth->setValue(arg1 * 100);
 
     for (auto rv : reverbs) {
-        rv->setWidth(arg1);
+        ParamGlide::set(this, QStringLiteral("setWidth") + QString::number(reinterpret_cast<quintptr>(rv)), float(arg1), [rv](float v) { rv->setWidth(v); });
     }
 }
 

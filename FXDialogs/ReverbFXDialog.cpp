@@ -1,4 +1,5 @@
 #include "ReverbFXDialog.h"
+#include "Widgets/ParamGlide.h"
 #include "ui_ReverbFXDialog.h"
 
 ReverbFXDialog::ReverbFXDialog(QWidget *parent, ReverbFX *reverbFX) :
@@ -80,7 +81,7 @@ void ReverbFXDialog::setInGain(int ing)
     ui->spinInGain->setValue(ing);
 
     if (rv != nullptr)
-        rv->setInGain((float)ing);
+        ParamGlide::set(this, QStringLiteral("setInGain"), float((float)ing), [this](float v) { if (rv) rv->setInGain(v); });
 
     connectAll();
 }
@@ -93,7 +94,7 @@ void ReverbFXDialog::setReverbMix(int m)
     ui->spinRvMix->setValue(m);
 
     if (rv != nullptr)
-        rv->setReverbMix((float)m);
+        ParamGlide::set(this, QStringLiteral("setReverbMix"), float((float)m), [this](float v) { if (rv) rv->setReverbMix(v); });
 
     connectAll();
 }
@@ -106,7 +107,7 @@ void ReverbFXDialog::setReverbTime(int t)
     ui->spinRvTime->setValue(t);
 
     if (rv != nullptr)
-        rv->setReverbTime((float)t);
+        ParamGlide::set(this, QStringLiteral("setReverbTime"), float((float)t), [this](float v) { if (rv) rv->setReverbTime(v); });
 
     connectAll();
 }
@@ -119,7 +120,7 @@ void ReverbFXDialog::setHighFreqRTRatio(float hf)
     ui->spinHF->setValue(hf);
 
     if (rv != nullptr)
-        rv->setHighFreqRTRatio(hf);
+        ParamGlide::set(this, QStringLiteral("setHighFreqRTRatio"), float(hf), [this](float v) { if (rv) rv->setHighFreqRTRatio(v); });
 
     connectAll();
 }
