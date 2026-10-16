@@ -57,6 +57,17 @@ bool AsioOutput::start(unsigned long source, int device)
         return false;
     }
 
+    // the driver must offer at least two output channels (ASIO4ALL has none until a device is switched on in its panel)
+    {
+        BASS_ASIO_INFO ai;
+        if (BASS_ASIO_GetInfo(&ai) && ai.outputs < 2) {
+            g_error = QString("This ASIO driver has no usable stereo output (%1 output channel(s)). "
+                              "For ASIO4ALL: open its panel from the tray icon and switch the output device on.").arg(ai.outputs);
+            BASS_ASIO_Free();
+            return false;
+        }
+    }
+
     // ask for the chosen rate (44.1 kHz free, up to 96 kHz PRO); if the driver refuses, keep its own rate (BASSmix resamples)
     BASS_ASIO_SetRate((double)g_rate);
     double rate = BASS_ASIO_GetRate();

@@ -57,7 +57,12 @@ public:
         gain->setSingleStep(0.5);
         gain->setDecimals(1);
         gain->setSuffix(QStringLiteral(" dB"));
-        gain->setValue(0.0);
+        gain->setLocale(QLocale::c());          // Western digits (the Thai locale showed ๐.๐)
+        // The file is cut straight from the mixer at full level, while what you hear also goes through the
+        // sound card / Windows / the player; -2 dB is the default trim so the file lands at the same loudness.
+        // The value is kept while the program runs.
+        gain->setValue(lastGain());
+        connect(gain, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [](double v) { lastGain() = v; });
         h1->addWidget(gain);
         h1->addStretch(1);
         v->addLayout(h1);
@@ -162,6 +167,7 @@ private:
 
     MidiSynthesizer *synth;
     QComboBox *fmt = nullptr;
+    static double &lastGain() { static double g = -2.0; return g; }
     QDoubleSpinBox *gain = nullptr;
     QLineEdit *path = nullptr;
     QLabel *status = nullptr;
