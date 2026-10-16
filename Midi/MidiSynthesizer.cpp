@@ -24,6 +24,9 @@
 #include <QThread>
 #include "Midi/MidiPlayer.h"
 
+// defined further down (used while the streams are created)
+namespace { void attachTrimDsp(InstrumentType t, DWORD handle); }
+
 QMap<int, QString> MidiSynthesizer::outDevices;
 
 MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)

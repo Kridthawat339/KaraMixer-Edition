@@ -497,6 +497,7 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
             int ml = st.value("Volume", 50).toInt();
             int pn = st.value("Pan", 0).toInt();
             int rv = st.value("Reverb", 0).toInt();
+            double tr = st.value("Trim", 0.0).toDouble();
             bool m = st.value("Mute", false).toBool();
             bool s = st.value("Solo", false).toBool();
             int  v = st.value("VSTi", -1).toInt();
@@ -506,6 +507,7 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
             ich->setSliderLevel(ml);
             ich->setPanValue(pn);
             ich->setReverbValue(rv);
+            ich->setTrimValue(tr);
             ich->setMuteButton(m);
             ich->setSoloButton(s);
 
@@ -526,6 +528,7 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
             synth->setVolume(t, ml);
             synth->setPan(t, pn);
             synth->setReverb(t, rv);
+            synth->setTrim(t, tr);
             synth->setMute(t, m);
             synth->setSolo(t, s);
             synth->setUseVSTi(t, v);
@@ -798,6 +801,7 @@ void SynthMixerDialog::settingValues()
         st.setValue("Volume", synth->volume(t));
         st.setValue("Pan", synth->pan(t));
         st.setValue("Reverb", synth->reverb(t));
+        st.setValue("Trim", synth->trim(t));
         st.setValue("Mute", synth->isMute(t));
         st.setValue("Solo", synth->isSolo(t));
         st.setValue("Bus", synth->busGroup(t));
@@ -1663,6 +1667,9 @@ void SynthMixerDialog::setChInstDetails()
         });
         connect(ich, &InstCh::reverbChanged, this, [this](InstrumentType ty, int lv) {
             synth->setReverb(ty, lv);
+        });
+        connect(ich, &InstCh::trimChanged, this, [this](InstrumentType ty, double db) {
+            synth->setTrim(ty, db);
         });
 
         connect(ich, SIGNAL(sliderDoubleClicked(InstrumentType)),

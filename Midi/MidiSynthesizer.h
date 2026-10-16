@@ -41,6 +41,7 @@ typedef struct
     int volume;
     int pan;          // -100 (left) .. 0 (centre) .. +100 (right)
     int reverb;       // per-channel reverb send, 0..100
+    double trimDb;    // fine level trim of the strip, -12..+12 dB (on top of the fader)
     int bus;
     int vsti;
     int device;
@@ -154,6 +155,8 @@ public:
     void setVolume(InstrumentType t, int volume);
     void setPan(InstrumentType t, int pan);
     void setReverb(InstrumentType t, int level);   // 0 = dry, 100 = very wet
+    double trim(InstrumentType t) { return instMap[t].trimDb; }
+    void setTrim(InstrumentType t, double db);     // fine gain per strip, -12..+12 dB in 0.1 dB steps
     void setMute(InstrumentType t, bool m);
     void setSolo(InstrumentType t, bool s);
     void setUseVSTi(InstrumentType t, int vstiIndex);
