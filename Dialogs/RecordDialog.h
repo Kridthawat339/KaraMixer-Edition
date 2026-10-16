@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <cmath>
 #include <QPushButton>
@@ -65,6 +66,10 @@ public:
         h1->addWidget(gain);
         h1->addStretch(1);
         v->addLayout(h1);
+
+        dither = new QCheckBox(QString::fromUtf8("Dither (TPDF) — ลดเสียงแตกเม็ดตอนบันทึก 16/24-bit"), this);
+        dither->setChecked(true);
+        v->addWidget(dither);
 
         QHBoxLayout *h2 = new QHBoxLayout();
         path = new QLineEdit(this);
@@ -131,6 +136,7 @@ private:
             QMessageBox::question(this, windowTitle(), QString::fromUtf8("มีไฟล์ชื่อนี้อยู่แล้ว ต้องการเขียนทับหรือไม่?")) != QMessageBox::Yes)
             return;
         QString err;
+        r.setDither(dither->isChecked() && fmt->currentData().toInt() < 32);
         r.setGainDb(gain->value() + kCalibrationDb);   // the box shows 0 dB = the level that matches what is heard
         if (!synth->isOpened() || !r.start(synth->mainMixerHandle(), file, fmt->currentData().toInt(), &err)) {
             status->setStyleSheet(QStringLiteral("color: #ff5a4d;"));
@@ -166,6 +172,7 @@ private:
 
     MidiSynthesizer *synth;
     QComboBox *fmt = nullptr;
+    QCheckBox *dither = nullptr;
     static constexpr double kCalibrationDb = -2.0;   // built-in trim: the file is cut at full level, so 0 dB in the box means -2 dB
     static double &lastGain() { static double g = 0.0; return g; }
     QDoubleSpinBox *gain = nullptr;

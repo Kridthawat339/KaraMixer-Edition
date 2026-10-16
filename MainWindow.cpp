@@ -31,6 +31,7 @@
 #include "Dialogs/SpeakerDialog.h"
 #include "Dialogs/LockSoundfontDialog.h"
 #include "Dialogs/RecordDialog.h"
+#include "Dialogs/MasteringDialog.h"
 #include "Widgets/ProMenuBadge.h"
 #include "Widgets/ProLicense.h"
 #include "Dialogs/Equalizer31BandDialog.h"
@@ -298,6 +299,9 @@ MainWindow::MainWindow(QWidget *parent) :
         bool useFX = settings->value("SynthUseFXRC", false).toBool();
         synth->setUsetFloattingPoint(useFloat);
         synth->setUseFXRC(useFX);
+
+        // PRO mastering (limiter / chain / auto level): saved settings, only with a licence
+        MasteringDialog::applySaved(synth);
 
         // Soundfonts and Soundfonts map
         // move to setup in main function (main.cpp)
@@ -1604,6 +1608,7 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
     menu.setMinimumWidth(230);
     QAction *lockSfAction = nullptr;
     QAction *recordAction = nullptr;
+    QAction *masteringAction = nullptr;
 
     QAction actionSettings(tr("ตั้งค่า..."), this);
     QAction actionMappChanel(tr("แยกช่องสัญญาณ..."), this);
@@ -1659,6 +1664,15 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
             if (!ProLicense::ensureUnlocked(dialogParent()))
                 return;
             RecordDialog dlg(dialogParent(), midiPlayer()->midiSynthesizer());
+            dlg.exec();
+        });
+
+        act = menu.addAction(MenuIcons::make(MenuIcons::Meter), tr("Mastering (Limiter / LUFS / Chain)..."));
+        masteringAction = act;   // PRO: master limiter, mastering chain, loudness meter + auto level
+        connect(act, &QAction::triggered, this, [this]() {
+            if (!ProLicense::ensureUnlocked(dialogParent()))
+                return;
+            MasteringDialog dlg(dialogParent(), midiPlayer()->midiSynthesizer());
             dlg.exec();
         });
 
@@ -1805,6 +1819,8 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
         ProMenuBadge::attach(&menu, lockSfAction);
     if (recordAction)
         ProMenuBadge::attach(&menu, recordAction);
+    if (masteringAction)
+        ProMenuBadge::attach(&menu, masteringAction);
     menu.exec(globalPos);
     QMetaObject::invokeMethod(synthMix, "syncQuickChecks");
 }

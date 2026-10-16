@@ -38,6 +38,8 @@ public:
     qint64 bytes() const { return qint64(frames.load()) * 2 * (bits / 8); }
     // extra gain for the file in dB (set before start), and the highest peak so far (0..1+, 1.0 = full scale)
     void setGainDb(double db) { userGain = std::pow(10.0, db / 20.0); }
+    // TPDF dither (+-1 LSB triangular noise) before the 16 / 24-bit rounding: no harsh quantisation distortion on quiet tails
+    void setDither(bool on) { ditherOn = on; }
     float peakValue() const { return peak.load(); }
     QString path() const { return filePath; }
 
@@ -185,6 +187,10 @@ private:
                 if (bits == 32) {
                     std::memcpy(p, &v, 4);
                 } else {
+                    if (ditherOn) {
+                        const float lsb = (bits == 16) ? (1.0f / 32768.0f) : (1.0f / 8388608.0f);
+                        v += (nextRand() - nextRand()) * lsb;
+                    }
                     if (v > 1.0f) v = 1.0f;
                     if (v < -1.0f) v = -1.0f;
                     if (bits == 16) {
@@ -206,6 +212,15 @@ private:
             pending.append(o);
         }
         frames += n;
+    }
+
+    // uniform 0..1 (xorshift32; the audio thread is the only user)
+    float nextRand()
+    {
+        rngState ^= rngState << 13;
+        rngState ^= rngState >> 17;
+        rngState ^= rngState << 5;
+        return float(rngState >> 8) * (1.0f / 16777216.0f);
     }
 
     void writeLoop()
@@ -241,6 +256,8 @@ private:
     QString filePath;
     DWORD chan = 0;
     HDSP dsp = 0;
+    bool ditherOn = false;
+    uint32_t rngState = 2463534242u;
     int chans = 2;
     int rate = 44100;
     int bits = 16;

@@ -14,6 +14,8 @@
 #include "Midi/OutputRecorder.h"
 
 #include <cstring>
+#include <memory>
+#include <vector>
 #include <atomic>
 #include <cmath>
 #include <QTimer>
@@ -26,6 +28,32 @@
 
 // defined further down (used while the streams are created)
 namespace { void attachTrimDsp(InstrumentType t, DWORD handle); }
+
+// PRO mastering: one MasterDsp::Chain per output mixer, installed as a DSP that runs after everything else
+// (master VSTs) and before the output recorder (-1000).
+namespace {
+struct MasterSlot {
+    MasterDsp::Chain chain;
+    bool isFloat = true;
+    bool decode = false;      // ASIO: the main mixer only decodes, its volume comes from AsioOutput
+};
+std::vector<std::unique_ptr<MasterSlot>> g_masterSlots;
+MasterDsp::Params g_masterParams;
+QMutex g_masterMx;
+
+void CALLBACK masterDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void *user)
+{
+    MasterSlot *s = static_cast<MasterSlot *>(user);
+    float vol = 1.0f;
+    if (s->decode) {
+        if (AsioOutput::isActive())
+            vol = AsioOutput::gain();
+    } else if (!BASS_ChannelGetAttribute(channel, BASS_ATTRIB_VOL, &vol)) {
+        vol = 1.0f;
+    }
+    s->chain.processBuffer(buffer, length, s->isFloat, vol);
+}
+}
 
 // Last value sent for every channel's controller / program / pitch ... (not notes). A VSTi plug-in cannot be asked for
 // its channel state, so it is kept here and sent again when a VSTi stream is recreated (e.g. speaker change).
@@ -232,6 +260,27 @@ bool MidiSynthesizer::open()
         mixers[i] = mixer;
     }
 
+    // PRO mastering DSP on every mixer (last DSP before the recorder)
+    {
+        QMutexLocker lk(&g_masterMx);
+        g_masterSlots.clear();
+        for (int i = 0; i < mixers.count(); i++) {
+            std::unique_ptr<MasterSlot> slot(new MasterSlot);
+            BASS_CHANNELINFO ci;
+            if (BASS_ChannelGetInfo(mixers[i].handle, &ci)) {
+                slot->isFloat = (ci.flags & BASS_SAMPLE_FLOAT) != 0;
+                slot->decode = (ci.flags & BASS_STREAM_DECODE) != 0;
+                slot->chain.prepare(int(ci.chans), int(ci.freq));
+                MasterDsp::Params p = g_masterParams;
+                if (i != 0)
+                    p.meter = false;
+                slot->chain.setParams(p);
+                BASS_ChannelSetDSP(mixers[i].handle, masterDspProc, slot.get(), -500);
+            }
+            g_masterSlots.push_back(std::move(slot));
+        }
+    }
+
     // master effects ride on the main output mixer
     if (!mixers.isEmpty())
         for (FX *fx : masterFXs)
@@ -353,6 +402,11 @@ void MidiSynthesizer::close()
 
         mixer.handle = 0;
         mixers[i] = mixer;
+    }
+
+    {
+        QMutexLocker lk(&g_masterMx);
+        g_masterSlots.clear();       // the mixers (and their DSPs) are gone
     }
 
     // compact soundfont
@@ -594,6 +648,35 @@ static void setVolSmooth(DWORD handle, float gain)
     } else {
         gainRamper()->set(handle, gain);
     }
+}
+
+void MidiSynthesizer::setMasterParams(const MasterDsp::Params &p)
+{
+    {
+        QMutexLocker lk(&g_masterMx);
+        g_masterParams = p;
+        for (size_t i = 0; i < g_masterSlots.size(); i++) {
+            MasterDsp::Params q = p;
+            if (i != 0)
+                q.meter = false;
+            g_masterSlots[i]->chain.setParams(q);
+        }
+    }
+    // a 16-bit mixer clips before any DSP sees the signal: the limiter / auto level need float to do their job
+    if ((p.limOn || p.autoOn || p.masterOn) && !useFloat && openned)
+        setUsetFloattingPoint(true);
+}
+
+MasterDsp::Params MidiSynthesizer::masterParams() const
+{
+    QMutexLocker lk(&g_masterMx);
+    return g_masterParams;
+}
+
+MasterDsp::Meter MidiSynthesizer::masterMeter() const
+{
+    QMutexLocker lk(&g_masterMx);
+    return g_masterSlots.empty() ? MasterDsp::Meter() : g_masterSlots[0]->chain.meter();
 }
 
 void MidiSynthesizer::setVolume(float vol)
