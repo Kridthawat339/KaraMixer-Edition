@@ -39,6 +39,7 @@ public slots:
     void setSliderLevel(int v);
     void setPanValue(int pan);   // -100..100, no signal
     void setReverbValue(int level);   // 0..100, no signal
+    void setTrimValue(double db);     // -12..+12 dB, no signal
     void peak(int v);
     void setBusBadge(int bus);   // bus: -1 = Master (badge hidden), 0.. = Bus 1..
     // Fold the Pan / Reverb knobs away: p = 0 shown ... 1 hidden (animated by the mixer window).
@@ -52,6 +53,7 @@ signals:
     void sliderDoubleClicked(InstrumentType type);
     void panChanged(InstrumentType type, int pan);
     void reverbChanged(InstrumentType type, int level);
+    void trimChanged(InstrumentType type, double db);
 
     void menuRequested(InstrumentType type, const QPoint &pos);
     void busMenuRequested(InstrumentType type, const QPoint &globalPos);
@@ -86,6 +88,9 @@ private:
     class PanKnob *revDial = nullptr;
     class QLabel *lbPanVal = nullptr;
     class QLabel *lbRevCap = nullptr;
+    class QPushButton *lbTrim = nullptr;
+    double trimVal = 0.0;
+    void setTrimInternal(double db, bool notify);
     QWidget *knobRow = nullptr;
     int baseHeight = -1;
     int knobRowHeight = 0;     // the knob block

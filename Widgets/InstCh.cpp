@@ -19,6 +19,9 @@
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QSignalBlocker>
+#include <QPushButton>
+#include <QHBoxLayout>
+#include <QLocale>
 
 // fader level 0..100 -> dB text (50 = 0 dB, 100 = +12 dB, see Midi/FaderTaper.h)
 static QString levelToDbText(int level)
@@ -56,6 +59,12 @@ static QString panValueText(int v)
 static QString revCaptionText(int v)
 {
     return v <= 0 ? QStringLiteral("REVERB") : QStringLiteral("REV ") + QString::number(v) + QStringLiteral("%");
+}
+
+// Trim read-out: sign, one decimal, always Western digits
+static QString trimText(double db)
+{
+    return (db > 0.0 ? QStringLiteral("+") : QString()) + QLocale::c().toString(db, 'f', 1) + QStringLiteral(" dB");
 }
 
 static QString revText(int v)
@@ -203,6 +212,48 @@ InstCh::InstCh(QWidget *parent) :
         g->addWidget(lbPanVal, 1, 0, 1, 3);
         g->addWidget(revDial, 2, 0, 1, 3, Qt::AlignHCenter);
         g->addWidget(lbRevCap, 3, 0, 1, 3);
+
+        // fine level trim of the strip, like the master's TRIM: - / + move it 0.1 dB (hold to repeat),
+        // the middle button shows the value and resets it to 0 dB when clicked (range -12 .. +12 dB)
+        {
+            const QString tb =
+                "QPushButton { background: transparent; color: #4f8cff; border: 1px solid #3b8cff;"
+                " border-radius: 4px; font-weight: bold; font-size: 8pt; padding: 0px; }"
+                "QPushButton:hover { border: 1px solid #7fb0ff; color: #7fb0ff; }"
+                "QPushButton:pressed { background: #3b8cff; color: #ffffff; }";
+            QWidget *tr = new QWidget(row);
+            QHBoxLayout *th = new QHBoxLayout(tr);
+            th->setContentsMargins(0, 2, 0, 0);
+            th->setSpacing(2);
+            QPushButton *dn = new QPushButton(QStringLiteral("-"), tr);
+            QPushButton *up = new QPushButton(QStringLiteral("+"), tr);
+            lbTrim = new QPushButton(trimText(0.0), tr);
+            for (QPushButton *b : { dn, up, lbTrim }) {
+                b->setFocusPolicy(Qt::NoFocus);
+                b->setCursor(Qt::PointingHandCursor);
+                b->setFixedHeight(18);
+                b->setStyleSheet(tb);
+            }
+            dn->setFixedWidth(18);
+            up->setFixedWidth(18);
+            lbTrim->setMinimumWidth(40);
+            dn->setAutoRepeat(true);
+            up->setAutoRepeat(true);
+            dn->setAutoRepeatDelay(350);
+            up->setAutoRepeatDelay(350);
+            dn->setAutoRepeatInterval(60);
+            up->setAutoRepeatInterval(60);
+            dn->setToolTip(QString::fromUtf8("Trim ลดลง 0.1 dB (กดค้างเพื่อลดต่อเนื่อง)"));
+            up->setToolTip(QString::fromUtf8("Trim เพิ่มขึ้น 0.1 dB (กดค้างเพื่อเพิ่มต่อเนื่อง)"));
+            lbTrim->setToolTip(QString::fromUtf8("Trim: ปรับความดังละเอียดของช่องนี้ (-12 ถึง +12 dB)\nคลิกที่ตัวเลข = กลับเป็น 0"));
+            th->addWidget(dn);
+            th->addWidget(lbTrim, 1);
+            th->addWidget(up);
+            g->addWidget(tr, 4, 0, 1, 3);
+            connect(dn, &QPushButton::clicked, this, [this]() { setTrimInternal(trimVal - 0.1, true); });
+            connect(up, &QPushButton::clicked, this, [this]() { setTrimInternal(trimVal + 0.1, true); });
+            connect(lbTrim, &QPushButton::clicked, this, [this]() { setTrimInternal(0.0, true); });
+        }
 
         knobRow = row;
         QVBoxLayout *vl = qobject_cast<QVBoxLayout *>(layout());
@@ -421,6 +472,23 @@ void InstCh::setReverbValue(int level)
     revDial->setToolTip(revText(level));
     if (lbRevCap)
         lbRevCap->setText(revCaptionText(level));
+}
+
+void InstCh::setTrimValue(double db)
+{
+    setTrimInternal(db, false);
+}
+
+void InstCh::setTrimInternal(double db, bool notify)
+{
+    db = qBound(-12.0, qRound(db * 10.0) / 10.0, 12.0);     // 0.1 dB steps, no float drift
+    if (db == trimVal && lbTrim && lbTrim->text() == trimText(db))
+        return;                                                // nothing changed
+    trimVal = db;
+    if (lbTrim)
+        lbTrim->setText(trimText(db));
+    if (notify)
+        emit trimChanged(instType, db);
 }
 
 void InstCh::peak(int v)
