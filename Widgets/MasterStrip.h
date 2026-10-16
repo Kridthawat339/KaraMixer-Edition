@@ -56,7 +56,7 @@ public:
     {
         setObjectName("masterStrip");
         setFixedWidth(88);   // same width as the Menu button above it
-        setMinimumHeight(378);   // grows to reach the bottom edge of the strip area
+        setMinimumHeight(398);   // grows to reach the bottom edge of the strip area
         setStyleSheet("QFrame#masterStrip { background: transparent; border: none; }");
 
         lbName = new QLabel(QStringLiteral("MASTER"), this);
@@ -251,7 +251,7 @@ public:
         // folded: the whole TRIM block goes (only MUTE stays), the strip is too short for it
         for (QWidget *w : { static_cast<QWidget *>(unityBtn), static_cast<QWidget *>(trimDn), static_cast<QWidget *>(trimUp) })
             if (w) w->setVisible(drop <= 0);
-        setMinimumHeight(qMax(0, 378 - drop));
+        setMinimumHeight(qMax(0, 398 - drop));
         updateGeometry();
     }
 

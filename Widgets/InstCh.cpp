@@ -228,14 +228,16 @@ InstCh::InstCh(QWidget *parent) :
             QPushButton *dn = new QPushButton(QStringLiteral("-"), tr);
             QPushButton *up = new QPushButton(QStringLiteral("+"), tr);
             lbTrim = new QPushButton(trimText(0.0), tr);
+            // - / + are the same size and a bigger glyph, so they are easy to see and to hit
+            const QString tbSign = tb + "QPushButton { font-size: 10pt; }";
             for (QPushButton *b : { dn, up, lbTrim }) {
                 b->setFocusPolicy(Qt::NoFocus);
                 b->setCursor(Qt::PointingHandCursor);
                 b->setFixedHeight(18);
-                b->setStyleSheet(tb);
+                b->setStyleSheet(b == lbTrim ? tb : tbSign);
             }
-            dn->setFixedWidth(16);
-            up->setFixedWidth(16);
+            dn->setFixedSize(19, 18);
+            up->setFixedSize(19, 18);
             lbTrim->setMinimumWidth(0);
             lbTrim->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);   // takes what is left between - and +
             tr->setMinimumWidth(0);
