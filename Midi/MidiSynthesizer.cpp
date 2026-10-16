@@ -170,8 +170,10 @@ bool MidiSynthesizer::open()
     for (int i=0; i<mixers.count(); i++)
     {
         MixerHandle mixer = mixers[i];
-        // ASIO: the main mixer only decodes; BASSASIO pulls the audio from it
-        const bool asioMain = (i == 0 && asioDev >= 0);
+        // ASIO: the main mixer only decodes; BASSASIO pulls the audio from it. The mixers of the other Windows
+        // devices must NOT play either: they would keep the sound card (e.g. the USB headset that ASIO4ALL is
+        // trying to open) busy, and the ASIO driver then stays silent / takes ages to start.
+        const bool asioMain = (asioDev >= 0);
         // NONSTOP: a mixer with nothing in it must keep running, not end (an ended mixer never plays again)
         mixer.handle = BASS_Mixer_StreamCreate(sampleRate, 8, (asioMain ? (f | BASS_STREAM_DECODE) : f) | BASS_MIXER_NONSTOP);
         mixer.eq->setStreamHandle(mixer.handle);
@@ -1328,7 +1330,7 @@ void MidiSynthesizer::setDevice(InstrumentType t, int device)
 
     DWORD flag = MidiHelper::getSpeakerFlag(instMap[t].speaker);
     BASS_Mixer_ChannelRemove(handles[t]);
-    BASS_Mixer_StreamAddChannel(mixers[device].handle, handles[t], flag);
+    BASS_Mixer_StreamAddChannel(mixers[asioDev >= 0 ? 0 : device].handle, handles[t], flag);   // ASIO: everything goes to the one main mixer
 }
 
 void MidiSynthesizer::setBusGroup(InstrumentType t, int group)
@@ -1347,7 +1349,7 @@ void MidiSynthesizer::setBusGroup(InstrumentType t, int group)
 
     if (group == -1)
     {
-        DWORD mix = mixers[instMap[t].device].handle;
+        DWORD mix = mixers[asioDev >= 0 ? 0 : instMap[t].device].handle;   // ASIO: only the main mixer runs
         BASS_Mixer_StreamAddChannel(mix, handles[t], flag);
     }
     else

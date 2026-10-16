@@ -58,9 +58,8 @@ public:
         gain->setDecimals(1);
         gain->setSuffix(QStringLiteral(" dB"));
         gain->setLocale(QLocale::c());          // Western digits (the Thai locale showed ๐.๐)
-        // The file is cut straight from the mixer at full level, while what you hear also goes through the
-        // sound card / Windows / the player; -2 dB is the default trim so the file lands at the same loudness.
-        // The value is kept while the program runs.
+        // The box shows 0 dB for the calibrated level (a fixed -2 dB trim is applied underneath, see kCalibrationDb);
+        // the value is kept while the program runs.
         gain->setValue(lastGain());
         connect(gain, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [](double v) { lastGain() = v; });
         h1->addWidget(gain);
@@ -132,7 +131,7 @@ private:
             QMessageBox::question(this, windowTitle(), QString::fromUtf8("มีไฟล์ชื่อนี้อยู่แล้ว ต้องการเขียนทับหรือไม่?")) != QMessageBox::Yes)
             return;
         QString err;
-        r.setGainDb(gain->value());
+        r.setGainDb(gain->value() + kCalibrationDb);   // the box shows 0 dB = the level that matches what is heard
         if (!synth->isOpened() || !r.start(synth->mainMixerHandle(), file, fmt->currentData().toInt(), &err)) {
             status->setStyleSheet(QStringLiteral("color: #ff5a4d;"));
             status->setText(QString::fromUtf8("เริ่มบันทึกไม่ได้: ") + err);
@@ -167,7 +166,8 @@ private:
 
     MidiSynthesizer *synth;
     QComboBox *fmt = nullptr;
-    static double &lastGain() { static double g = -2.0; return g; }
+    static constexpr double kCalibrationDb = -2.0;   // built-in trim: the file is cut at full level, so 0 dB in the box means -2 dB
+    static double &lastGain() { static double g = 0.0; return g; }
     QDoubleSpinBox *gain = nullptr;
     QLineEdit *path = nullptr;
     QLabel *status = nullptr;
