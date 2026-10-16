@@ -11,6 +11,9 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QDataStream>
+#include <QSaveFile>
 #include <QProcess>
 #include <QSettings>
 #include <QWindow>
@@ -1515,6 +1518,28 @@ void MainWindow::showContextMenu(const QPoint &pos)
 static const char *CFG_APP_PREFIX   = "App/";
 static const char *CFG_SYNTH_PREFIX = "Synth/";
 
+// New .kmcfg format: the two settings files stored byte for byte. Copying key by key through QVariant changed some
+// values (lists written as text, "a,b,c" strings turned into string lists ...) and the sound came back wrong.
+static const quint32 CFG_RAW_MAGIC = 0x4B4D4352;   // "KMCR"
+
+static QByteArray readWholeFile(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return QByteArray();
+    return f.readAll();
+}
+
+static bool writeWholeFile(const QString &path, const QByteArray &data)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly))
+        return false;
+    f.write(data);
+    return f.commit();
+}
+
 void MainWindow::saveConfigFile()
 {
     // make sure the file on disk holds the current mixer state first
@@ -1540,17 +1565,19 @@ void MainWindow::saveConfigFile()
             return;
     }
 
-    QFile::remove(file);
     {
-        QSettings out(file, QSettings::IniFormat);
-        QSettings app(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-        QSettings syn(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
-
-        for (const QString &k : app.allKeys())
-            out.setValue(CFG_APP_PREFIX + k, app.value(k));
-        for (const QString &k : syn.allKeys())
-            out.setValue(CFG_SYNTH_PREFIX + k, syn.value(k));
-        out.sync();
+        QSettings(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat).sync();
+        QSettings(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat).sync();
+        QByteArray blob;
+        QDataStream ds(&blob, QIODevice::WriteOnly);
+        ds.setVersion(QDataStream::Qt_5_12);
+        ds << CFG_RAW_MAGIC << quint32(1)
+           << readWholeFile(Config::CONFIG_APP_FILE_PATH)
+           << readWholeFile(Config::CONFIG_SYNTH_FILE_PATH);
+        if (!writeWholeFile(file, blob)) {
+            QMessageBox::warning(synthMix, tr("บันทึกคอนฟิก"), tr("บันทึกไฟล์ไม่สำเร็จ\n") + file);
+            return;
+        }
     }
 
     // silent confirmation: a message box would play the system sound in the middle of the music
@@ -1564,10 +1591,29 @@ void MainWindow::openConfigFile()
     if (file.isEmpty())
         return;
 
-    QSettings in(file, QSettings::IniFormat);
-    QStringList keys = in.allKeys();
+    // new format (raw copy of both settings files)?
+    QByteArray rawApp, rawSyn;
+    bool isRaw = false;
+    {
+        const QByteArray all = readWholeFile(file);
+        QDataStream ds(all);
+        ds.setVersion(QDataStream::Qt_5_12);
+        quint32 magic = 0, ver = 0;
+        ds >> magic >> ver;
+        if (ds.status() == QDataStream::Ok && magic == CFG_RAW_MAGIC) {
+            ds >> rawApp >> rawSyn;
+            if (ds.status() != QDataStream::Ok) {
+                QMessageBox::warning(synthMix, tr("เปิดคอนฟิก"), tr("ไฟล์คอนฟิกเสียหาย"));
+                return;
+            }
+            isRaw = true;
+        }
+    }
 
-    bool valid = false;
+    QSettings in(file, QSettings::IniFormat);
+    QStringList keys = isRaw ? QStringList() : in.allKeys();
+
+    bool valid = isRaw;
     for (const QString &k : keys) {
         if (k.startsWith(CFG_APP_PREFIX) || k.startsWith(CFG_SYNTH_PREFIX)) {
             valid = true;
@@ -1588,7 +1634,15 @@ void MainWindow::openConfigFile()
     skipSaveOnExit = true;
     synthMix->setSkipSave(true);
 
-    {
+    if (isRaw) {
+        if (!writeWholeFile(Config::CONFIG_APP_FILE_PATH, rawApp) ||
+            !writeWholeFile(Config::CONFIG_SYNTH_FILE_PATH, rawSyn)) {
+            skipSaveOnExit = false;
+            synthMix->setSkipSave(false);
+            QMessageBox::warning(synthMix, tr("เปิดคอนฟิก"), tr("เขียนไฟล์คอนฟิกไม่สำเร็จ"));
+            return;
+        }
+    } else {
         QSettings app(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
         QSettings syn(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
         app.clear();
