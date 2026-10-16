@@ -193,8 +193,7 @@ public:
             MasterDsp::Params p = collect();
             MasterDsp::applyPreset(p, i - 1);
             p.masterOn = true;
-            loadUi(p);
-            presetBox->setCurrentIndex(i);
+            loadUi(p, i);      // sets the combo while 'loading' is on (no re-entry)
             changed();
         });
         connect(reset, &QPushButton::clicked, this, [this]() {
@@ -275,7 +274,7 @@ private:
         return p;
     }
 
-    void loadUi(const MasterDsp::Params &p)
+    void loadUi(const MasterDsp::Params &p, int presetIndex = 0)
     {
         loading = true;
         masterOn->setChecked(p.masterOn);
@@ -294,7 +293,7 @@ private:
         release->setValue(p.releaseMs);
         softClip->setChecked(p.softClip);
         truePeak->setChecked(p.truePeak);
-        presetBox->setCurrentIndex(0);
+        presetBox->setCurrentIndex(presetIndex);
         loading = false;
     }
 
