@@ -27,6 +27,43 @@
 // defined further down (used while the streams are created)
 namespace { void attachTrimDsp(InstrumentType t, DWORD handle); }
 
+// Last value sent for every channel's controller / program / pitch ... (not notes). A VSTi plug-in cannot be asked for
+// its channel state, so it is kept here and sent again when a VSTi stream is recreated (e.g. speaker change).
+namespace {
+QMutex g_evMx;
+QHash<quint32, DWORD> g_evState;
+
+void trackEvent(int ch, DWORD et, DWORD param)
+{
+    if (ch < 0 || ch > 15)
+        return;
+    if (et == MIDI_EVENT_NOTE || et == MIDI_EVENT_NOTESOFF || et == MIDI_EVENT_SOUNDOFF || et == MIDI_EVENT_KEYPRES)
+        return;
+    QMutexLocker lock(&g_evMx);
+    if (et == MIDI_EVENT_RESET) {               // all controllers reset: forget this channel's state
+        for (auto it = g_evState.begin(); it != g_evState.end(); ) {
+            if ((it.key() >> 24) == quint32(ch))
+                it = g_evState.erase(it);
+            else
+                ++it;
+        }
+        return;
+    }
+    g_evState[(quint32(ch) << 24) | (et & 0xFFFFFF)] = param;
+}
+
+#ifndef __linux__
+void replayVstiEvents(HSTREAM h)
+{
+    if (!h)
+        return;
+    QMutexLocker lock(&g_evMx);
+    for (auto it = g_evState.constBegin(); it != g_evState.constEnd(); ++it)
+        bv::ProcessEvent(h, int(it.key() >> 24), DWORD(it.key() & 0xFFFFFF), it.value());
+}
+#endif
+}
+
 QMap<int, QString> MidiSynthesizer::outDevices;
 
 MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)
@@ -1584,6 +1621,41 @@ void MidiSynthesizer::setUseVSTi(InstrumentType t, int vstiIndex)
     #endif
 }
 
+namespace {
+const DWORD kRestoreEvents[] = {
+    MIDI_EVENT_BANK, MIDI_EVENT_BANK_LSB, MIDI_EVENT_DRUMS, MIDI_EVENT_PROGRAM,
+    MIDI_EVENT_VOLUME, MIDI_EVENT_PAN, MIDI_EVENT_EXPRESSION, MIDI_EVENT_MODULATION, MIDI_EVENT_SUSTAIN,
+    MIDI_EVENT_REVERB, MIDI_EVENT_CHORUS, MIDI_EVENT_PITCHRANGE, MIDI_EVENT_PITCH,
+    MIDI_EVENT_CUTOFF, MIDI_EVENT_RESONANCE, MIDI_EVENT_ATTACK, MIDI_EVENT_RELEASE, MIDI_EVENT_DECAY,
+    MIDI_EVENT_FINETUNE, MIDI_EVENT_COARSETUNE
+};
+const int kRestoreCount = int(sizeof(kRestoreEvents) / sizeof(kRestoreEvents[0]));
+}
+
+// state of one MIDI stream's 16 channels (program, volume, pan, reverb ...), read from / written back to the stream
+static QVector<DWORD> snapshotStream(HSTREAM h)
+{
+    QVector<DWORD> v(16 * kRestoreCount, DWORD(-1));
+    if (!h)
+        return v;
+    for (int ch = 0; ch < 16; ch++)
+        for (int k = 0; k < kRestoreCount; k++)
+            v[ch * kRestoreCount + k] = BASS_MIDI_StreamGetEvent(h, ch, kRestoreEvents[k]);
+    return v;
+}
+
+static void restoreStream(HSTREAM h, const QVector<DWORD> &v)
+{
+    if (!h || v.size() != 16 * kRestoreCount)
+        return;
+    for (int ch = 0; ch < 16; ch++)
+        for (int k = 0; k < kRestoreCount; k++) {
+            const DWORD val = v[ch * kRestoreCount + k];
+            if (val != DWORD(-1))
+                BASS_MIDI_StreamEvent(h, ch, kRestoreEvents[k], val);
+        }
+}
+
 void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
 {
     if (t >= InstrumentType::BusGroup1)
@@ -1599,6 +1671,28 @@ void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
     for (FX *fx : instMap[t].FXs)
         fx->setStreamHandle(0);
     attachSendReverb(t, 0);
+
+    // The new stream starts with every channel at its defaults (piano, default volume, no reverb ...): that is why
+    // the sound used to come out quieter / different until the song was restarted. Keep the old stream's channel
+    // state and write it back to the new one.
+    const bool midiStream = static_cast<int>(t) < HANDLE_MIDI_COUNT - HANDLE_VSTI_COUNT;
+    const QVector<DWORD> chState = midiStream ? snapshotStream(handles[t]) : QVector<DWORD>();
+
+    // VSTi: the plug-in's current sound (program / parameters / chunk) is read from the running instance before it is
+    // freed - the copy kept for the next start-up can be older than what the user has just dialled in
+    #ifndef __linux__
+    const int sIdx = static_cast<int>(t);
+    const bool vstiStream = sIdx >= HANDLE_VSTI_START && sIdx < HANDLE_MIDI_COUNT;
+    if (vstiStream && handles[t]) {
+        const int vIndex = sIdx - HANDLE_VSTI_START;
+        mVstiTempProgram[vIndex] = bv::GetProgram(handles[t]);
+        mVstiTempParams[vIndex] = FX::getVSTParams(handles[t]);
+        DWORD length = 0;
+        char *chunk = bv::GetChunk(handles[t], false, &length);
+        if (chunk && length > 0)
+            mVstiChunk[vIndex] = QByteArray(chunk, int(length));
+    }
+    #endif
 
     BASS_Mixer_ChannelRemove(handles[t]);
     #ifndef __linux__
@@ -1621,7 +1715,13 @@ void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
         fx->setStreamHandle(handles[t]);
     attachSendReverb(t, handles[t]);
 
-    setSoundfontPresets(sfPreset);
+    setSoundfontPresets(sfPreset);          // soundfonts / presets onto the new stream first ...
+    if (midiStream)
+        restoreStream(handles[t], chState);  // ... then the channels' program, volume, pan, reverb ...
+    #ifndef __linux__
+    if (vstiStream)
+        replayVstiEvents(handles[t]);        // VSTi: the last controllers / programs sent to it
+    #endif
 }
 
 QStringList MidiSynthesizer::audioDevices()
@@ -1691,16 +1791,6 @@ QList<Chorus2FX *> MidiSynthesizer::chorusFXs()
 // The MIDI streams are new after close()/open(), so every channel would fall back to piano + the default drum kit
 // until the song (or the karaoke program feeding the MIDI input) sends its program changes again.  The state of
 // each channel is read before the rebuild and sent back afterwards, so the music simply carries on.
-namespace {
-const DWORD kRestoreEvents[] = {
-    MIDI_EVENT_BANK, MIDI_EVENT_BANK_LSB, MIDI_EVENT_DRUMS, MIDI_EVENT_PROGRAM,
-    MIDI_EVENT_VOLUME, MIDI_EVENT_PAN, MIDI_EVENT_EXPRESSION, MIDI_EVENT_MODULATION, MIDI_EVENT_SUSTAIN,
-    MIDI_EVENT_REVERB, MIDI_EVENT_CHORUS, MIDI_EVENT_PITCHRANGE, MIDI_EVENT_PITCH,
-    MIDI_EVENT_CUTOFF, MIDI_EVENT_RESONANCE, MIDI_EVENT_ATTACK, MIDI_EVENT_RELEASE, MIDI_EVENT_DECAY,
-    MIDI_EVENT_FINETUNE, MIDI_EVENT_COARSETUNE
-};
-const int kRestoreCount = int(sizeof(kRestoreEvents) / sizeof(kRestoreEvents[0]));
-}
 
 QVector<DWORD> MidiSynthesizer::snapshotChannels()
 {
@@ -2251,6 +2341,7 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
 
 void MidiSynthesizer::sendToAllMidiStream(int ch, DWORD eventType, DWORD param)
 {
+    trackEvent(ch, eventType, param);
     for (int i=0; i<HANDLE_MIDI_COUNT; i++) {
         HSTREAM stream = handles[static_cast<InstrumentType>(i)];
         if (i < HANDLE_VSTI_START)
