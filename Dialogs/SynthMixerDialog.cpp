@@ -1380,7 +1380,12 @@ void SynthMixerDialog::buildSidePanels()
             if (!ok || name.isEmpty())
                 return;
             if (names.contains(name) &&
-                QMessageBox::question(this, tr("บันทึก Preset"), tr("มี Preset ชื่อนี้แล้ว เขียนทับ?")) != QMessageBox::Yes)
+                [this]() {   // NoIcon: Windows plays no warning sound over the music
+                    QMessageBox box(QMessageBox::NoIcon, tr("บันทึก Preset"), tr("มี Preset ชื่อนี้แล้ว เขียนทับ?"),
+                                    QMessageBox::Yes | QMessageBox::No, this);
+                    box.setDefaultButton(QMessageBox::No);
+                    return box.exec();
+                }() != QMessageBox::Yes)
                 return;
             QSettings w(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
             w.beginGroup("MixerPresets");

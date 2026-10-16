@@ -31,6 +31,8 @@
 #include "Dialogs/SpeakerDialog.h"
 #include "Dialogs/LockSoundfontDialog.h"
 #include "Dialogs/RecordDialog.h"
+#include <QToolTip>
+#include <QCursor>
 #include "Dialogs/MasteringDialog.h"
 #include "Widgets/ProMenuBadge.h"
 #include "Widgets/ProLicense.h"
@@ -1522,11 +1524,21 @@ void MainWindow::saveConfigFile()
     QDir().mkpath(Config::CONFIG_DIR_PATH);   // dialog opens in the config folder itself
     QString file = QFileDialog::getSaveFileName(synthMix, tr("บันทึกคอนฟิก"),
                         QDir(Config::CONFIG_DIR_PATH).absoluteFilePath("KaraMixer.kmcfg"),
-                        tr("KaraMixer config (*.kmcfg)"));
+                        tr("KaraMixer config (*.kmcfg)"), nullptr,
+                        QFileDialog::DontConfirmOverwrite);   // no overwrite prompt (it plays a warning sound over the music)
     if (file.isEmpty())
         return;
     if (!file.endsWith(".kmcfg", Qt::CaseInsensitive))
         file += ".kmcfg";
+
+    if (QFileInfo::exists(file)) {   // ask before overwriting, with NoIcon so Windows plays no sound over the music
+        QMessageBox box(QMessageBox::NoIcon, tr("บันทึกคอนฟิก"),
+                        tr("มีไฟล์นี้อยู่แล้ว ต้องการเขียนทับหรือไม่?\n") + file,
+                        QMessageBox::Yes | QMessageBox::No, synthMix);
+        box.setDefaultButton(QMessageBox::No);
+        if (box.exec() != QMessageBox::Yes)
+            return;
+    }
 
     QFile::remove(file);
     {
@@ -1541,8 +1553,8 @@ void MainWindow::saveConfigFile()
         out.sync();
     }
 
-    QMessageBox::information(synthMix, tr("บันทึกคอนฟิก"),
-                             tr("บันทึกคอนฟิกเรียบร้อยแล้ว\n") + file);
+    // silent confirmation: a message box would play the system sound in the middle of the music
+    QToolTip::showText(QCursor::pos(), tr("บันทึกคอนฟิกเรียบร้อยแล้ว\n") + file, synthMix, QRect(), 4000);
 }
 
 void MainWindow::openConfigFile()
