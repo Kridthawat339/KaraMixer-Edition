@@ -14,6 +14,7 @@
 #include "Midi/OutputRecorder.h"
 
 #include <cstring>
+#include <atomic>
 #include <cmath>
 #include <QTimer>
 #include <QHash>
@@ -84,6 +85,7 @@ MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)
         im.volume = 50;
         im.pan = 0;
         im.reverb = 0;
+        im.trimDb = 0.0;
         im.bus = -1;
         im.vsti = -1;
         im.device = 0;
@@ -200,6 +202,7 @@ bool MidiSynthesizer::open()
     {
         InstrumentType t = static_cast<InstrumentType>(i);
         handles[t] = createStream(t);
+        attachTrimDsp(t, handles[t]);
     }
 
     // Check device.. volume .. mute.. solo.. bus.. and VST
@@ -468,6 +471,71 @@ GainRamper *gainRamper()
         return p;
     }();
     return g;
+}
+}
+
+// the strip's gain from the fader. The fine Trim is NOT part of it: it is a separate gain stage (a DSP on the
+// strip's own stream, below), so it works the same whatever the output path is.
+static float stripGain(const Instrument &im)
+{
+    return FaderTaper::gain(im.volume);
+}
+
+// ---- per-strip Trim: a gain applied by a DSP on the strip's stream (runs last, after the strip's effects) ----
+namespace {
+struct TrimDsp
+{
+    std::atomic<float> target{1.0f};    // set from the GUI thread
+    float cur = 1.0f;                   // audio thread only
+};
+TrimDsp g_trimDsp[62];                  // one per strip (MIDI / VSTi / bus), index = InstrumentType
+
+void CALLBACK trimDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void *user)
+{
+    TrimDsp *d = static_cast<TrimDsp *>(user);
+    const float t = d->target.load(std::memory_order_relaxed);
+    if (d->cur == t && t == 1.0f)
+        return;
+    BASS_CHANNELINFO info;
+    if (!BASS_ChannelGetInfo(channel, &info))
+        return;
+    const bool isFloat = (info.flags & BASS_SAMPLE_FLOAT) != 0;
+    const size_t chans = info.chans ? size_t(info.chans) : 1;
+    const size_t count = length / (isFloat ? 4 : 2);       // samples
+    const size_t frames = count / chans;
+    if (!frames)
+        return;
+    const float from = d->cur;
+    const float step = (t - from) / float(frames);        // glide over this block: no zipper noise
+    if (isFloat) {
+        float *p = static_cast<float *>(buffer);
+        for (size_t f = 0; f < frames; f++) {
+            const float g = from + step * float(f + 1);
+            for (size_t c = 0; c < chans; c++)
+                p[f * chans + c] *= g;
+        }
+    } else {
+        short *p = static_cast<short *>(buffer);
+        for (size_t f = 0; f < frames; f++) {
+            const float g = from + step * float(f + 1);
+            for (size_t c = 0; c < chans; c++) {
+                float v = float(p[f * chans + c]) * g;
+                if (v > 32767.0f) v = 32767.0f;
+                if (v < -32768.0f) v = -32768.0f;
+                p[f * chans + c] = short(v);
+            }
+        }
+    }
+    d->cur = t;
+}
+
+void attachTrimDsp(InstrumentType t, DWORD handle)
+{
+    const int i = static_cast<int>(t);
+    if (!handle || i < 0 || i >= 62)
+        return;
+    g_trimDsp[i].cur = g_trimDsp[i].target.load();         // a new stream starts at the current trim, no glide
+    BASS_ChannelSetDSP(handle, trimDspProc, &g_trimDsp[i], -1000);
 }
 }
 
@@ -1374,8 +1442,16 @@ void MidiSynthesizer::setVolume(InstrumentType t, int volume)
     if (!instMap[t].enable)
         return;
 
-    setVolSmooth(handles[t], FaderTaper::gain(instMap[t].volume));
+    setVolSmooth(handles[t], stripGain(instMap[t]));
     BASS_ChannelSetAttribute(handles[t], BASS_ATTRIB_PAN, instMap[t].pan / 100.0f);   // re-applied whenever the channel is re-attached
+}
+
+void MidiSynthesizer::setTrim(InstrumentType t, double db)
+{
+    instMap[t].trimDb = qBound(-12.0, db, 12.0);
+    const int i = static_cast<int>(t);
+    if (i >= 0 && i < 62)
+        g_trimDsp[i].target.store(float(std::pow(10.0, instMap[t].trimDb / 20.0)));   // the strip's DSP glides to it
 }
 
 void MidiSynthesizer::setPan(InstrumentType t, int pan)
@@ -1451,7 +1527,7 @@ void MidiSynthesizer::setMute(InstrumentType t, bool m)
     if (m)
         setVolSmooth(handles[t], 0.0f);
     else
-        setVolSmooth(handles[t], FaderTaper::gain(instMap[t].volume));
+        setVolSmooth(handles[t], stripGain(instMap[t]));
 }
 
 void MidiSynthesizer::setSolo(InstrumentType t, bool s)
@@ -1476,7 +1552,7 @@ void MidiSynthesizer::setSolo(InstrumentType t, bool s)
     for (const Instrument itr : instMap.values()) {
 
         if (itr.enable)
-            setVolSmooth(handles[itr.type], FaderTaper::gain(itr.volume));
+            setVolSmooth(handles[itr.type], stripGain(itr));
         else
             setVolSmooth(handles[itr.type], 0.0f);
     }
@@ -1528,6 +1604,7 @@ void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
     BASS_StreamFree(handles[t]);
 
     handles[t] = createStream(t);
+    attachTrimDsp(t, handles[t]);
 
     // Check device.. volume .. mute.. solo.. bus.. and VST
     setDevice(t, instMap[t].device);
@@ -2042,6 +2119,8 @@ DWORD MidiSynthesizer::setVSTiFile(int vstiIndex, const QString &file)
     bv::ChannelFree(vsti);
 
     vsti = createStream(t);
+    if (vsti)
+        attachTrimDsp(t, vsti);
 
     if (vsti)
     {
