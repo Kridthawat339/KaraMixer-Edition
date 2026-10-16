@@ -111,6 +111,7 @@ public:
         l1->addWidget(masterOn, 0, 0, 1, 2);
         presetBox = new QComboBox(g1);
         presetBox->addItem(QString::fromUtf8("— ปรับเอง —"));
+        presetBox->addItem(QString::fromUtf8("Default (ค่าเริ่มต้น)"));
         for (int i = 0; i < MasterDsp::presetCount(); i++)
             presetBox->addItem(QString::fromLatin1(MasterDsp::presetName(i)));
         l1->addWidget(new QLabel(QString::fromUtf8("พรีเซ็ต :"), g1), 1, 0);
@@ -191,8 +192,18 @@ public:
             if (i <= 0 || loading)
                 return;
             MasterDsp::Params p = collect();
-            MasterDsp::applyPreset(p, i - 1);
-            p.masterOn = true;
+            if (i == 1) {          // Default: the chain's own settings back to neutral (limiter / auto level untouched)
+                const MasterDsp::Params d;
+                p.compAmount = d.compAmount;
+                p.lowDb = d.lowDb;
+                p.midDb = d.midDb;
+                p.highDb = d.highDb;
+                p.exciter = d.exciter;
+                p.width = d.width;
+            } else {
+                MasterDsp::applyPreset(p, i - 2);
+                p.masterOn = true;
+            }
             loadUi(p, i);      // sets the combo while 'loading' is on (no re-entry)
             changed();
         });
