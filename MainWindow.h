@@ -66,6 +66,7 @@ public:
     void showContextMenuAt(const QPoint &globalPos);
     void saveConfigFile();
     void openConfigFile();
+    void applyConfigLive();   // apply the saved config files to the running program (no restart)
 
 public slots:
     void play(int index, int position = 0);

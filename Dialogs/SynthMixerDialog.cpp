@@ -683,6 +683,181 @@ void SynthMixerDialog::setFXToSynth()
     }
 }
 
+// Applies the saved settings (SynthMixer.conf / KaraMixer.conf) to the RUNNING mixer, so a loaded config takes effect
+// without restarting the program and the music keeps playing. It mirrors what the constructor and setFXToSynth()
+// do at start-up, but only touches what really changed (a stream / mixer is rebuilt only when its device, bus or
+// speaker is different), so there is no gap in the sound.
+void SynthMixerDialog::reloadFromSettings()
+{
+    skipSave = true;      // the auto-save timer must not write the old state over the new files meanwhile
+
+    QSettings st(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
+    QSettings app(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+    st.sync();
+    app.sync();
+
+    // ---- effects now loaded are removed, the saved chains are loaded again
+    for (InstrumentType t : chInstMap.keys()) {
+        int guard = 64;
+        while (guard-- > 0 && !synth->instrument(t).FXs.isEmpty()) {
+            if (!synth->removeFX(t, 0))
+                break;
+            chInstMap[t]->removeVSTLabel(0);
+        }
+    }
+    {
+        int guard = 64;
+        while (guard-- > 0 && !synth->masterFXList().isEmpty()) {
+            if (!synth->removeMasterFX(0))
+                break;
+            masterStrip->removeFxLabel(0);
+        }
+    }
+
+    // per-strip soundfont choices: forget the old ones, setFXToSynth() reads the saved ones
+    {
+        const QMap<int, QString> oldSf = synth->stripSoundfonts();
+        for (auto it = oldSf.constBegin(); it != oldSf.constEnd(); ++it)
+            synth->setStripSoundfont(static_cast<InstrumentType>(it.key()), QString(), false);
+    }
+
+    // soundfont preset tab
+    setSoundfontPresets(st.value("SoundfontPresets", 0).toInt());
+
+    // effect chains (strips + master) and strip soundfonts
+    setFXToSynth();
+    synth->setSoundfontPresets(synth->soundfontPresets());
+
+    // ---- bus names
+    {
+        const QStringList n1 = st.value("BusNames", QStringList()).toStringList();
+        const QStringList n2 = st.value("BusFullNames", QStringList()).toStringList();
+        if (n1.count() == 16 && n2.count() == 16) {
+            const int start = static_cast<int>(InstrumentType::BusGroup1);
+            for (int i = 0; i < 16; i++) {
+                const InstrumentType type = static_cast<InstrumentType>(start + i);
+                if (chInstMap.contains(type))
+                    chInstMap[type]->setInstrumentNames(n1[i], n2[i]);
+            }
+        }
+    }
+
+    // ---- master EQ / chorus / reverb (on AND off)
+    {
+        const bool eqOn = st.value("MasterEqOn", false).toBool();
+        const QList<float> eqParams = st.value("MasterEqParams").value<QList<float>>();
+        for (auto eq : synth->equalizer31BandFXs()) {
+            if (eqParams.count() > 0)
+                eq->setParams(eqParams);
+            if (eqOn) eq->on(); else eq->off();
+        }
+        const bool chorusOn = st.value("MasterChorusOn", false).toBool();
+        const QList<float> chorusParams = st.value("MasterChorusParams").value<QList<float>>();
+        for (auto cr : synth->chorusFXs()) {
+            if (chorusParams.count() > 0)
+                cr->setParams(chorusParams);
+            if (chorusOn) cr->on(); else cr->off();
+        }
+        const bool reverbOn = st.value("MasterReverbOn", false).toBool();
+        const QList<float> reverbParams = st.value("MasterReverbParams").value<QList<float>>();
+        for (auto rv : synth->reverbFXs()) {
+            if (reverbParams.count() > 0)
+                rv->setParams(reverbParams);
+            if (reverbOn) rv->on(); else rv->off();
+        }
+    }
+
+    // ---- LED colours
+    LEDVu *vu0 = chInstMap.first()->vuBar();
+    const QString bg = st.value("LedBgColor", vu0->backgroundColor().name()).toString();
+    const QString o1 = st.value("LedColorOn1", vu0->ledColorOn1().name()).toString();
+    const QString o2 = st.value("LedColorOn2", vu0->ledColorOn2().name()).toString();
+    const QString o3 = st.value("LedColorOn3", vu0->ledColorOn3().name()).toString();
+    const QString f1 = st.value("LedColorOff1", vu0->ledColorOff1().name()).toString();
+    const QString f2 = st.value("LedColorOff2", vu0->ledColorOff2().name()).toString();
+    const QString f3 = st.value("LedColorOff3", vu0->ledColorOff3().name()).toString();
+    const bool sph = st.value("ShowPeakHold", vu0->isShowPeakHold()).toBool();
+    const int phm = st.value("PeakHoldMs", vu0->peakHoldMs()).toInt();
+
+    // ---- every strip
+    st.beginReadArray("SynthMixer");
+    for (InstrumentType t : chInstMap.keys())
+    {
+        st.setArrayIndex(static_cast<int>(t));
+        const int dv = st.value("Device", 0).toInt();
+        const int b = st.value("Bus", -1).toInt();
+        const int ml = st.value("Volume", 50).toInt();
+        const int pn = st.value("Pan", 0).toInt();
+        const int rv = st.value("Reverb", 0).toInt();
+        const double tr = st.value("Trim", 0.0).toDouble();
+        const bool m = st.value("Mute", false).toBool();
+        const bool s = st.value("Solo", false).toBool();
+        const int v = st.value("VSTi", -1).toInt();
+        const int sp = st.value("Speaker", 0).toInt();
+        const QString ext = st.value("ExtMidiOut", "").toString();
+
+        InstCh *ich = chInstMap[t];
+        ich->setSliderLevel(ml);
+        ich->setPanValue(pn);
+        ich->setReverbValue(rv);
+        ich->setTrimValue(tr);
+        ich->setMuteButton(m);
+        ich->setSoloButton(s);
+
+        LEDVu *vBar = ich->vuBar();
+        vBar->setBackGroundColor(QColor(bg));
+        vBar->setLedColorOn1(QColor(o1));
+        vBar->setLedColorOn2(QColor(o2));
+        vBar->setLedColorOn3(QColor(o3));
+        vBar->setLedColorOff1(QColor(f1));
+        vBar->setLedColorOff2(QColor(f2));
+        vBar->setLedColorOff3(QColor(f3));
+        vBar->setShowPeakHold(sph);
+        vBar->setPeakHoldMs(phm);
+
+        // routing: only rebuilt when it is really different
+        if (synth->device(t) != dv && synth->busGroup(t) != -1)
+            synth->setBusGroup(t, -1);          // setDevice() is ignored while the strip is on a bus
+        if (synth->device(t) != dv)
+            synth->setDevice(t, dv);
+        if (synth->busGroup(t) != b)
+            synth->setBusGroup(t, b);
+        ich->setBusBadge(b);
+
+        synth->setVolume(t, ml);
+        synth->setPan(t, pn);
+        synth->setReverb(t, rv);
+        synth->setTrim(t, tr);
+        synth->setMute(t, m);
+        synth->setSolo(t, s);
+        if (synth->useVSTi(t) != v)
+            synth->setUseVSTi(t, v);
+        if (synth->extMidiOut(t) != ext)
+            synth->setExtMidiOut(t, ext);
+        if (static_cast<int>(synth->speaker(t)) != sp)
+            synth->setSpeaker(t, static_cast<SpeakerType>(sp));
+    }
+    st.endArray();
+
+    // ---- master volume / mute (application config)
+    {
+        const int vl = app.value("MidiVolume", 50).toInt();
+        const bool mm = app.value("MasterMute", false).toBool();
+        masterStrip->setLevel(vl);
+        player->setVolume(vl);
+        masterStrip->btnMute->setChecked(mm);    // also tells the player (same slot as a click)
+        player->setMasterMute(mm);
+    }
+
+    // ---- drum tuning and the quick buttons
+    for (int g = 0; g < MidiSynthesizer::DrumTuneGroupCount; g++)
+        synth->setDrumTune(g, app.value(QString("DrumTune%1").arg(g), 0).toInt());
+    synth->setIgnoreDrumPitch(app.value("IgnoreDrumPitch", true).toBool());
+    syncQuickChecks();
+
+    skipSave = false;
+}
+
 InstCh *SynthMixerDialog::mixChannel(InstrumentType t)
 {
     return chInstMap[t];

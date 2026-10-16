@@ -71,6 +71,7 @@ public:
     // ASIO output (-1 = normal Windows device)
     bool setAsioDevice(int asioIndex);
     int  asioDevice() const { return asioDev; }
+    bool setAsioDeviceKeepState(int asioIndex);   // same, but the channels' program / volume ... survive the rebuild
     QString asioError() const { return asioErr; }
 
     bool open();

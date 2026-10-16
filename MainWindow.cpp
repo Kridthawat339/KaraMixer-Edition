@@ -37,6 +37,10 @@
 #include <QToolTip>
 #include <QCursor>
 #include "Dialogs/MasteringDialog.h"
+#ifndef __linux__
+#include "BASSFX/VSTFX.h"
+#include "Vst3/BassVst3.h"
+#endif
 #include "Widgets/ProMenuBadge.h"
 #include "Widgets/ProLicense.h"
 #include "Dialogs/Equalizer31BandDialog.h"
@@ -1658,8 +1662,135 @@ void MainWindow::openConfigFile()
         syn.sync();
     }
 
-    QProcess::startDetached(qApp->applicationFilePath(), QStringList() << "--delay");
-    qApp->quit();
+    // the files on disk are the new config: apply it to the running program (the music keeps playing)
+    skipSaveOnExit = false;
+    synthMix->setSkipSave(false);
+    applyConfigLive();
+    QToolTip::showText(QCursor::pos(), tr("โหลดคอนฟิกเรียบร้อยแล้ว (ไม่ต้องรีสตาร์ท)"), synthMix, QRect(), 4000);
+}
+
+void MainWindow::applyConfigLive()
+{
+    MidiSynthesizer *synth = player->midiSynthesizer();
+    synthMix->setSkipSave(true);          // no auto-save of the old state over the new files while this runs
+
+    settings->sync();                     // MainWindow's own QSettings re-reads the replaced file
+    QSettings app(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+    app.sync();
+
+    // ---- 1. audio engine options (the setters rebuild the audio only when the value really changes)
+    {
+        const bool pro = ProLicense::isUnlocked();
+        int synBuf = app.value("SynthBuffer", 100).toInt();
+        if (!pro && synBuf < 50)
+            synBuf = 50;
+        BASS_SetConfig(BASS_CONFIG_BUFFER, synBuf);
+
+        synth->setVoices(pro ? app.value("SynthVoices", 500).toInt() : 256);
+        synth->setSincInterpolation(pro ? app.value("SynthSinc", true).toBool() : false);
+
+        int aout = app.value("SynthDefaultDevice", 1).toInt();
+        int asio = app.value("AsioDevice", -1).toInt();
+        if (asio >= AsioOutput::devices().count())
+            asio = -1;
+        if (asio != synth->asioDevice())
+            synth->setAsioDeviceKeepState(asio);
+        if (asio < 0 && aout != synth->defaultDevice())
+            synth->setDefaultDevice(aout);
+
+        synth->setSampleRate(pro ? app.value("SynthSampleRate", 44100).toInt() : 44100);
+        synth->setUsetFloattingPoint(app.value("SynthFloatPoint", true).toBool());
+        synth->setUseFXRC(app.value("SynthUseFXRC", false).toBool());
+    }
+
+    // ---- 2. soundfonts (list, volumes, preset maps)
+    {
+        synth->setLoadAllSoundfont(app.value("SynthSoundfontsLoadAll", false).toBool());
+
+        const QStringList want = app.value("SynthSoundfonts", QStringList()).toStringList();
+        if (synth->soundfontFiles() != want) {
+            int guard = 512;
+            while (guard-- > 0 && !synth->soundfontFiles().isEmpty())
+                synth->removeSoundfont(0);
+            for (const QString &f : want)
+                synth->addSoundfont(f);
+        }
+        app.beginReadArray("SynthSoundfontsVolume");
+        for (int i = 0; i < want.count(); i++) {
+            app.setArrayIndex(i);
+            synth->setSoundfontVolume(i, app.value("SoundfontVolume", 100).toInt() / 100.0f);
+        }
+        app.endArray();
+
+        for (int i = 0; i < SF_PRESET_COUNT; i++) {
+            QString sfKey = "SynthSoundfontsMap";
+            QString drKey = "SynthSoundfontsDrumMap";
+            if (i > 0) {
+                sfKey += QString::number(i);
+                drKey += QString::number(i);
+            }
+            QList<int> sfMap     = app.value(sfKey).value<QList<int>>();
+            QList<int> sfDrumMap = app.value(drKey).value<QList<int>>();
+            if (sfMap.count() == 0)
+                sfMap = synth->getMapSoundfontIndex(i);
+            if (sfDrumMap.count() == 0)
+                sfDrumMap = synth->getDrumMapSfIndex(i);
+            synth->setMapSoundfontIndex(i, sfMap, sfDrumMap);
+        }
+    }
+
+    #ifndef __linux__
+    // ---- 3. VSTi instruments
+    {
+        QSettings st(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
+        st.sync();
+        st.beginReadArray("VSTiGroup");
+        for (int i = 0; i < synth->HANDLE_VSTI_COUNT; i++) {
+            st.setArrayIndex(i);
+            const QString filePath = st.value("VstiFilePath", "").toString();
+            const int program = st.value("VstiPrograms", 0).toInt();
+            const QList<float> params = st.value("VstiParams").value<QList<float>>();
+            const QByteArray chunk = st.value("VstiChunk", QByteArray()).toByteArray();
+
+            if (filePath.isEmpty()) {
+                if (!synth->vstiFile(i).isEmpty())
+                    synth->removeVSTiFile(i);
+                continue;
+            }
+            const DWORD vsti = synth->setVSTiFile(i, filePath);   // same file = nothing is reloaded
+            if (vsti == 0)
+                continue;
+            if (chunk.length() > 0) {
+                bv::SetChunk(vsti, false, chunk.constData(), chunk.length());
+            } else {
+                bv::SetProgram(vsti, program);
+                FX::setVSTParams(vsti, params);
+            }
+        }
+        st.endArray();
+    }
+    #endif
+
+    // ---- 4. player options (drum locks)
+    {
+        auto lock = [&](const char *key, const char *numKey, int def, void (MidiPlayer::*fn)(bool, int)) {
+            const bool on = app.value(key, false).toBool();
+            (player->*fn)(on, on ? app.value(numKey, def).toInt() : 0);
+        };
+        lock("MidiLockDrum",  "MidiLockDrumNumber",  0,  &MidiPlayer::setLockDrum);
+        lock("MidiLockSnare", "MidiLockSnareNumber", 38, &MidiPlayer::setLockSnare);
+        lock("MidiLockKick",  "MidiLockKickNumber",  36, &MidiPlayer::setLockKick);
+        lock("MidiLockBass",  "MidiLockBassNumber",  32, &MidiPlayer::setLockBass);
+    }
+
+    // ---- 5. the mixer: strips, effects, routing, master volume ...
+    synthMix->reloadFromSettings();
+
+    // ---- 6. PRO mastering
+    MasteringDialog::applySaved(synth);
+
+    ui->sliderVolume->setValue(player->volume());
+    synthMix->setSkipSave(false);
 }
 
 QWidget* MainWindow::dialogParent()

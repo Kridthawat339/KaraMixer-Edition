@@ -438,6 +438,20 @@ bool MidiSynthesizer::setAsioDevice(int asioIndex)
     return asioDev == asioIndex;
 }
 
+bool MidiSynthesizer::setAsioDeviceKeepState(int asioIndex)
+{
+    if (asioIndex == asioDev)
+        return true;
+    if (!openned)
+        return setAsioDevice(asioIndex);
+
+    const QVector<DWORD> state = snapshotChannels();
+    const bool ok = setAsioDevice(asioIndex);
+    setSoundfontPresets(sfPreset);
+    restoreChannels(state);
+    return ok;
+}
+
 bool MidiSynthesizer::setDefaultDevice(int dv)
 {
     if (openned && asioDev >= 0)

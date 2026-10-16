@@ -30,6 +30,7 @@ public:
     void setVSTVendorMenu();
     #endif
     void setFXToSynth();
+    void reloadFromSettings();     // apply the saved settings to the running mixer (no restart)
     InstCh* mixChannel(InstrumentType t);
     QMap<InstrumentType, InstCh *> mixChannelMap();
     QMap<InstrumentType, InstCh *> *mixChannelMapPtr();
