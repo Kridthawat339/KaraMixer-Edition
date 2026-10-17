@@ -137,22 +137,6 @@ bool AsioOutput::start(unsigned long source, int device)
 
     asioLog(QString("started: asio rate=%1 cpu=%2").arg(BASS_ASIO_GetRate()).arg(BASS_ASIO_GetCPU()));
     g_active = true;
-    {   // probe: what really reaches the driver outputs (play something while this runs, ~20 s)
-        const int gen = ++g_gen;
-        std::thread([gen]() {
-            for (int i = 1; i <= 20; i++) {
-                Sleep(1000);
-                if (gen != g_gen.load() || !g_active)
-                    return;
-                const float l0 = BASS_ASIO_ChannelGetLevel(FALSE, 0);
-                const float l1 = BASS_ASIO_ChannelGetLevel(FALSE, 1);
-                asioLog(QString("probe %1s: out L=%2 R=%3 active0=%4 cpu=%5 latency=%6")
-                        .arg(i).arg(l0, 0, 'f', 4).arg(l1, 0, 'f', 4)
-                        .arg(BASS_ASIO_ChannelIsActive(FALSE, 0)).arg(BASS_ASIO_GetCPU(), 0, 'f', 1)
-                        .arg(BASS_ASIO_GetLatency(FALSE)));
-            }
-        }).detach();
-    }
     return true;
 }
 
