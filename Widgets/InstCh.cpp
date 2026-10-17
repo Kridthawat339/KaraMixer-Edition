@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QLocale>
+#include <QEvent>
 
 // fader level 0..100 -> dB text (50 = 0 dB, 100 = +12 dB, see Midi/FaderTaper.h)
 static QString levelToDbText(int level)
@@ -29,6 +30,15 @@ static QString levelToDbText(int level)
     if (FaderTaper::isSilent(level))
         return QStringLiteral("-inf dB");
     const double d = FaderTaper::db(level);
+    return (d > 0.05 ? QStringLiteral("+") : QString()) + QString::number(d, 'f', 1) + QStringLiteral(" dB");
+}
+
+// dB read-out of the strip: fader level + trim
+static QString levelTrimToDbText(int level, double trim)
+{
+    if (FaderTaper::isSilent(level))
+        return QStringLiteral("-inf dB");
+    const double d = FaderTaper::db(level) + trim;
     return (d > 0.05 ? QStringLiteral("+") : QString()) + QString::number(d, 'f', 1) + QStringLiteral(" dB");
 }
 
@@ -216,11 +226,6 @@ InstCh::InstCh(QWidget *parent) :
         // fine level trim of the strip, like the master's TRIM: - / + move it 0.1 dB (hold to repeat),
         // the middle button shows the value and resets it to 0 dB when clicked (range -12 .. +12 dB)
         {
-            const QString tb =
-                "QPushButton { background: transparent; color: #4f8cff; border: 1px solid #3b8cff;"
-                " border-radius: 4px; font-weight: bold; font-size: 7pt; padding: 0px; margin: 0px; min-width: 0px; }"
-                "QPushButton:hover { border: 1px solid #7fb0ff; color: #7fb0ff; }"
-                "QPushButton:pressed { background: #3b8cff; color: #ffffff; }";
             QWidget *tr = new QWidget(row);
             QHBoxLayout *th = new QHBoxLayout(tr);
             th->setContentsMargins(0, 2, 0, 0);
@@ -228,16 +233,13 @@ InstCh::InstCh(QWidget *parent) :
             QPushButton *dn = new QPushButton(QStringLiteral("-"), tr);
             QPushButton *up = new QPushButton(QStringLiteral("+"), tr);
             lbTrim = new QPushButton(trimText(0.0), tr);
-            // - / + are the same size and a bigger glyph, so they are easy to see and to hit
-            const QString tbSign = tb + "QPushButton { font-size: 10pt; }";
             for (QPushButton *b : { dn, up, lbTrim }) {
                 b->setFocusPolicy(Qt::NoFocus);
                 b->setCursor(Qt::PointingHandCursor);
-                b->setFixedHeight(18);
-                b->setStyleSheet(b == lbTrim ? tb : tbSign);
             }
-            dn->setFixedSize(19, 18);
-            up->setFixedSize(19, 18);
+            dn->setFixedSize(16, 15);
+            up->setFixedSize(16, 15);
+            lbTrim->setFixedHeight(15);
             lbTrim->setMinimumWidth(0);
             lbTrim->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);   // takes what is left between - and +
             tr->setMinimumWidth(0);
@@ -257,6 +259,9 @@ InstCh::InstCh(QWidget *parent) :
             connect(dn, &QPushButton::clicked, this, [this]() { setTrimInternal(trimVal - 0.1, true); });
             connect(up, &QPushButton::clicked, this, [this]() { setTrimInternal(trimVal + 0.1, true); });
             connect(lbTrim, &QPushButton::clicked, this, [this]() { setTrimInternal(0.0, true); });
+            trimDn = dn;
+            trimUp = up;
+            applyTrimStyle();
         }
 
         knobRow = row;
@@ -453,7 +458,7 @@ void InstCh::setSliderLevel(int v)
 {
     ui->slider->setLevel(v);
     ui->slider->setToolTip(levelToTipText(v));
-    ui->lbDb->setText(levelToDbText(v));
+    ui->lbDb->setText(levelTrimToDbText(v, trimVal));
 }
 
 void InstCh::setPanValue(int pan)
@@ -491,6 +496,8 @@ void InstCh::setTrimInternal(double db, bool notify)
     trimVal = db;
     if (lbTrim)
         lbTrim->setText(trimText(db));
+    ui->slider->setTrimDb(db);                                       // the knob follows the trim, in fine steps
+    ui->lbDb->setText(levelTrimToDbText(ui->slider->level(), db));  // read-out = fader + trim (matches the knob)
     if (notify)
         emit trimChanged(instType, db);
 }
@@ -540,7 +547,7 @@ void InstCh::onBtnSoloClicked()
 void InstCh::onSliderUserLevelChanged(int v)
 {
     ui->slider->setToolTip(levelToTipText(v));
-    ui->lbDb->setText(levelToDbText(v));
+    ui->lbDb->setText(levelTrimToDbText(v, trimVal));
     QToolTip::showText(QCursor::pos(), levelToTipText(v));
     emit sliderLevelChanged(instType, v);
 }
@@ -632,4 +639,38 @@ bool InstCh::eventFilter(QObject *obj, QEvent *e)
         }
     }
     return QWidget::eventFilter(obj, e);
+}
+
+
+// Trim row colours come from the current theme (the accent colour of the faders), pushed lighter or darker until it
+// reads clearly on the window colour; small, whole-pixel font sizes keep the text crisp.
+void InstCh::applyTrimStyle()
+{
+    if (!lbTrim || !trimDn || !trimUp)
+        return;
+    const QColor bg = palette().color(QPalette::Window);
+    QColor c = palette().color(QPalette::Link);
+    if (!c.isValid())
+        c = palette().color(QPalette::Highlight);
+    const bool dark = bg.lightness() < 128;
+    for (int i = 0; i < 8 && qAbs(c.lightness() - bg.lightness()) < 110; i++)
+        c = dark ? c.lighter(120) : c.darker(125);
+    const QColor hover = dark ? c.lighter(125) : c.darker(125);
+    const QString css = QStringLiteral(
+        "QPushButton { background: transparent; color: %1; border: 1px solid %1; border-radius: 3px;"
+        " font-weight: bold; font-size: 9px; padding: 0px; margin: 0px; min-width: 0px; }"
+        "QPushButton:hover { color: %2; border: 1px solid %2; }"
+        "QPushButton:pressed { background: %1; color: %3; }")
+            .arg(c.name(), hover.name(), bg.name());
+    const QString signs = css + QStringLiteral("QPushButton { font-size: 12px; }");
+    lbTrim->setStyleSheet(css);
+    trimDn->setStyleSheet(signs);
+    trimUp->setStyleSheet(signs);
+}
+
+void InstCh::changeEvent(QEvent *e)
+{
+    QWidget::changeEvent(e);
+    if (e->type() == QEvent::PaletteChange || e->type() == QEvent::ApplicationPaletteChange)
+        applyTrimStyle();
 }

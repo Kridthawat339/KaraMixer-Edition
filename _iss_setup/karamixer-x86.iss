@@ -1,10 +1,10 @@
 ; KaraMixer Edition - Inno Setup script
 ; Build with (from repository root, after the app is built and deployed):
-;   iscc /DAppVersion=3.0.0 _iss_setup\karamixer-x86.iss
+;   iscc /DAppVersion=2.0.0 _iss_setup\karamixer-x86.iss
 ; Expected layout:  deploy\x86\  (KaraMixer.exe + Qt/BASS dlls, see .github\workflows\build-windows.yml)
 
 #ifndef AppVersion
-  #define AppVersion "2.0"
+  #define AppVersion "2.0.0"
 #endif
 #define MyAppName "KaraMixer Edition"
 #define MyAppPublisher "Buai Music"
@@ -14,14 +14,16 @@
 [Setup]
 AppId={{E92A4B7D-1C60-47F3-A8D5-6B0C3F9E5A18}
 AppName={#MyAppName}
-AppVersion={#AppVersion}
+AppVersion=v.{#AppVersion} Pro
+AppVerName={#MyAppName} v.{#AppVersion} Pro
+VersionInfoVersion={#AppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\KaraMixer Edition (32-bit)
 DefaultGroupName={#MyAppName} (32-bit)
 AllowNoIcons=yes
 LicenseFile=..\gpl-3.0.rtf
 OutputDir=..\dist
-OutputBaseFilename=KaraMixer-{#AppVersion}-x86-setup
+OutputBaseFilename=KaraMixer-v{#AppVersion}-Pro-x86-setup
 SetupIconFile=..\karamixer.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma

@@ -179,6 +179,50 @@ int FaderSlider::levelForY(int y) const
     return sMinLv + int(std::lround(f * abslv));
 }
 
+bool FaderSlider::taperRange() const
+{
+    return sMinLv == 0 && sMaxLv == FaderTaper::kMaxLevel;
+}
+
+// dB of a fractional fader level (same law as FaderTaper::db)
+static double dbOfLevelF(double L)
+{
+    if (L >= FaderTaper::kMaxLevel) return FaderTaper::kTopDb;
+    if (L >= FaderTaper::kUnityLevel)
+        return (L - FaderTaper::kUnityLevel) * FaderTaper::kTopDb / double(FaderTaper::kMaxLevel - FaderTaper::kUnityLevel);
+    return FaderTaper::kFloorDb * (FaderTaper::kUnityLevel - L) / double(FaderTaper::kUnityLevel);
+}
+
+qreal FaderSlider::shownLevel() const
+{
+    if (sTrimDb == 0.0 || !taperRange() || sLv <= 0)
+        return sLv;
+    const double d = FaderTaper::db(sLv) + sTrimDb;
+    return qBound(0.0, FaderTaper::levelForDb(d), double(sMaxLv));
+}
+
+int FaderSlider::userLevelForY(int y) const
+{
+    if (sTrimDb == 0.0 || !taperRange())
+        return levelForY(y);
+    const qreal travel = qMax(1, height() - sHandle->height());
+    qreal f = 1.0 - (y - sHandle->height() / 2.0) / travel;
+    f = qBound(0.0, f, 1.0);
+    const double shown = f * (sMaxLv - sMinLv);         // where the knob should be drawn
+    if (shown <= 0.0)
+        return 0;
+    const double faderDb = dbOfLevelF(shown) - sTrimDb;  // the fader level that puts the knob there
+    return qBound(sMinLv, int(std::lround(FaderTaper::levelForDb(faderDb))), sMaxLv);
+}
+
+void FaderSlider::setTrimDb(double db)
+{
+    if (db == sTrimDb)
+        return;
+    sTrimDb = db;
+    moveHandle();
+}
+
 qreal FaderSlider::handleCenterY(int level) const
 {
     const int abslv = abs(sMaxLv - sMinLv);
@@ -229,7 +273,7 @@ void FaderSlider::mousePressEvent(QMouseEvent *event)
     if (event->button() != Qt::LeftButton)
         return;
 
-    int lv = levelForY(event->y());
+    int lv = userLevelForY(event->y());
 
     if (lv > sMaxLv)
         lv = sMaxLv;
@@ -250,7 +294,7 @@ void FaderSlider::mouseMoveEvent(QMouseEvent *event)
     if (event->buttons() != Qt::LeftButton)
         return;
 
-    int lv = levelForY(event->y());
+    int lv = userLevelForY(event->y());
 
     if (lv > sMaxLv)
         lv = sMaxLv;
@@ -328,9 +372,9 @@ void FaderSlider::moveHandle()
     int abslv = abs(sMaxLv-sMinLv);
     int maxHeight = height() - sHandle->height();
 
-    int absCurrentLv =  abs(sMinLv-sLv);
+    const qreal absCurrentLv = qAbs(shownLevel() - sMinLv);     // fractional: the strip trim moves the knob in fine steps
 
     sHandle->move(sShowScale ? this->width() - sHandle->width() - 1 : (this->width() - sHandle->width()) / 2,
-                  maxHeight * (abslv - absCurrentLv) / abslv);
+                  int(std::lround(maxHeight * (abslv - absCurrentLv) / abslv)));
     update();
 }
