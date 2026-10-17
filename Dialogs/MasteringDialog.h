@@ -321,7 +321,7 @@ private:
 
     static QString lufs(float v)
     {
-        return v <= -99.0f ? QStringLiteral("—") : QLocale::c().toString(v, 'f', 1) + QStringLiteral(" LUFS");
+        return v <= -99.0f ? QString(QChar(0x2014)) : QLocale::c().toString(v, 'f', 1) + QStringLiteral(" LUFS");
     }
 
     void refresh()
@@ -333,10 +333,10 @@ private:
         lblShort->setText(QString::fromUtf8("เฉลี่ย 3 วินาที (Short-term) : ") + lufs(m.shortTerm));
         lblAuto->setText(QString::fromUtf8("Auto Level ปรับอยู่ : ") + QLocale::c().toString(m.autoDb, 'f', 1) + QStringLiteral(" dB"));
         lblOut->setText(QString::fromUtf8("ประมาณหลังปรับ : ") +
-                        (m.shortTerm <= -99.0f ? QStringLiteral("—") : lufs(m.shortTerm + m.autoDb)));
+                        (m.shortTerm <= -99.0f ? QString(QChar(0x2014)) : lufs(m.shortTerm + m.autoDb)));
         lblGr->setText(QString::fromUtf8("Limiter กดอยู่ : ") + QLocale::c().toString(m.grDb, 'f', 1) + QStringLiteral(" dB"));
         lblPeak->setText(QString::fromUtf8("ยอดเสียงออก (Peak) : ") +
-                         (m.peakDb <= -99.0f ? QStringLiteral("—") : QLocale::c().toString(m.peakDb, 'f', 1) + QStringLiteral(" dBFS")));
+                         (m.peakDb <= -99.0f ? QString(QChar(0x2014)) : QLocale::c().toString(m.peakDb, 'f', 1) + QStringLiteral(" dBFS")));
     }
 
     MidiSynthesizer *synth = nullptr;

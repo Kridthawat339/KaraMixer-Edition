@@ -164,7 +164,7 @@ private:
                                 .arg(s / 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'))
                                 .arg(r.bytes() / 1048576.0, 0, 'f', 1).arg(pkText)
                                 .arg(pk >= 0.999f ? QString::fromUtf8("  (แตก! ลดความดังไฟล์)") : QString()));
-        } else if (status->styleSheet().contains(QLatin1String("ff5a4d")) && status->text().startsWith(QStringLiteral("●"))) {
+        } else if (status->styleSheet().contains(QLatin1String("ff5a4d")) && status->text().startsWith(QString(QChar(0x25CF)))) {
             status->setStyleSheet(QString());
             status->setText(QString::fromUtf8("หยุดแล้ว"));
         }
