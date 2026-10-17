@@ -14,6 +14,7 @@ namespace {
     DWORD  g_mix    = 0;      // stereo float mixer fed to the ASIO driver
     bool   g_active = false;
     int    g_rate   = 44100;  // sample rate asked from the driver
+    DWORD  g_stopTick = 0;    // GetTickCount() of the last BASS_ASIO_Free (drivers need a moment before a re-init)
     std::atomic<float> g_gainTarget{1.0f};   // master volume x headroom (a decoding mixer ignores BASS_ATTRIB_VOL)
     float  g_gainCur = 1.0f;
 
