@@ -13,11 +13,13 @@
 #include <QDateTime>
 #include <QTextStream>
 #include <atomic>
+#include <thread>
 
 namespace {
     DWORD  g_mix    = 0;      // stereo float mixer fed to the ASIO driver
     bool   g_active = false;
     int    g_rate   = 44100;  // sample rate asked from the driver
+    std::atomic<int> g_gen{0};  // generation of the running ASIO session (stops the level probe)
     DWORD  g_stopTick = 0;    // GetTickCount() of the last BASS_ASIO_Free (drivers need a moment before a re-init)
     std::atomic<float> g_gainTarget{1.0f};   // master volume x headroom (a decoding mixer ignores BASS_ATTRIB_VOL)
     float  g_gainCur = 1.0f;
@@ -135,11 +137,28 @@ bool AsioOutput::start(unsigned long source, int device)
 
     asioLog(QString("started: asio rate=%1 cpu=%2").arg(BASS_ASIO_GetRate()).arg(BASS_ASIO_GetCPU()));
     g_active = true;
+    {   // probe: what really reaches the driver outputs (play something while this runs, ~20 s)
+        const int gen = ++g_gen;
+        std::thread([gen]() {
+            for (int i = 1; i <= 20; i++) {
+                Sleep(1000);
+                if (gen != g_gen.load() || !g_active)
+                    return;
+                const float l0 = BASS_ASIO_ChannelGetLevel(FALSE, 0);
+                const float l1 = BASS_ASIO_ChannelGetLevel(FALSE, 1);
+                asioLog(QString("probe %1s: out L=%2 R=%3 active0=%4 cpu=%5 latency=%6")
+                        .arg(i).arg(l0, 0, 'f', 4).arg(l1, 0, 'f', 4)
+                        .arg(BASS_ASIO_ChannelIsActive(FALSE, 0)).arg(BASS_ASIO_GetCPU(), 0, 'f', 1)
+                        .arg(BASS_ASIO_GetLatency(FALSE)));
+            }
+        }).detach();
+    }
     return true;
 }
 
 void AsioOutput::stop()
 {
+    ++g_gen;
     if (g_active) {
         BASS_ASIO_Stop();
         BASS_ASIO_Free();
