@@ -268,7 +268,7 @@ bool MidiSynthesizer::open()
         for (int i = 0; i < mixers.count(); i++) {
             std::unique_ptr<MasterSlot> slot(new MasterSlot);
             BASS_CHANNELINFO ci;
-            if (BASS_ChannelGetInfo(mixers[i].handle, &ci)) {
+            if (asioDev < 0 && BASS_ChannelGetInfo(mixers[i].handle, &ci)) {   // TEST: no mastering DSP on the ASIO decode mixer
                 slot->isFloat = (ci.flags & BASS_SAMPLE_FLOAT) != 0;
                 slot->decode = (ci.flags & BASS_STREAM_DECODE) != 0;
                 slot->chain.prepare(int(ci.chans), int(ci.freq));
