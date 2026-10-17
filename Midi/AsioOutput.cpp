@@ -52,6 +52,13 @@ bool AsioOutput::start(unsigned long source, int device)
     if (device < 0 || source == 0)
         return false;
 
+    // many ASIO drivers stay silent (or fail) when re-initialised right after being freed: wait for the driver to settle
+    if (g_stopTick != 0) {
+        const DWORD since = GetTickCount() - g_stopTick;
+        if (since < 600)
+            Sleep(600 - since);
+    }
+
     if (!BASS_ASIO_Init(device, BASS_ASIO_THREAD)) {
         g_error = QString("ASIO init failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
         return false;
@@ -112,6 +119,7 @@ void AsioOutput::stop()
     if (g_active) {
         BASS_ASIO_Stop();
         BASS_ASIO_Free();
+        g_stopTick = GetTickCount();
         g_active = false;
     }
     if (g_mix) {
