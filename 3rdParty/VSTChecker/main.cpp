@@ -10,6 +10,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
+#include <objbase.h>
+#pragma comment(lib, "ole32.lib")
 
 static std::string toUtf8(const wchar_t *w)
 {
@@ -44,6 +46,10 @@ static int checkVst3(const std::string &path)
 
 int main(int argc, char *argv[])
 {
+#ifdef _WIN32
+    // many VST3 plug-ins (JUCE, Steinberg ...) need COM before their factory can be created
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+#endif
     if (argc != 2)
     {
         std::cout << "Invalid parameter, argc is " << argc << std::endl;
