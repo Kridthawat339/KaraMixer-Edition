@@ -717,12 +717,31 @@ void SettingsDialog::initDeviceTab()
         while (oldLay->count() > 0)
             nl->addItem(oldLay->takeAt(0));
         delete oldLay;
+        // QLayout::addItem does not reparent: move every widget of the moved items into 'inner' (else they stay
+        // children of the tab, hidden behind the scroll area -> blank page).
+        {
+            std::function<void(QLayout *)> reparent = [&](QLayout *l) {
+                for (int i = 0; i < l->count(); ++i)
+                {
+                    QLayoutItem *it = l->itemAt(i);
+                    if (QWidget *w = it->widget())
+                    {
+                        w->setParent(inner);
+                        w->show();
+                    }
+                    else if (QLayout *sub = it->layout())
+                        reparent(sub);
+                }
+            };
+            reparent(nl);
+        }
 
         FitScrollArea *sa = new FitScrollArea(ui->tab_4);
         sa->setWidgetResizable(true);
         sa->setFrameShape(QFrame::NoFrame);
         sa->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         sa->setWidget(inner);
+        inner->show();
         QVBoxLayout *tl = new QVBoxLayout(ui->tab_4);
         tl->setContentsMargins(0, 0, 0, 0);
         tl->addWidget(sa);
