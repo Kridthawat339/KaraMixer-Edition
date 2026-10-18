@@ -254,8 +254,23 @@ bool MidiSynthesizer::open()
         if (!asioMain)
         {
             DWORD device = (i == 0) ? defaultDev : outDevices.keys()[i];
+            // right after leaving ASIO the driver (ASIO4ALL especially) may still hold the sound card for a moment:
+            // give it time to let go and retry until the mixer really plays, otherwise Windows Audio stays silent
+            const bool afterAsio = AsioOutput::recentlyStopped(8000);
+            if (afterAsio)
+                AsioOutput::waitSettle(800);
             BASS_ChannelSetDevice(mixer.handle, device);
-            BASS_ChannelPlay(mixer.handle, false);
+            bool playing = BASS_ChannelPlay(mixer.handle, false) != FALSE;
+            int tries = 0;
+            while (afterAsio && !playing && tries < 12) {
+                QThread::msleep(250);
+                tries++;
+                BASS_ChannelSetDevice(mixer.handle, device);
+                playing = BASS_ChannelPlay(mixer.handle, false) != FALSE;
+            }
+            if (afterAsio)
+                AsioOutput::logLine(QString("back to Windows Audio: mixer %1 device=%2 playing=%3 retries=%4 bassErr=%5")
+                                    .arg(i).arg(device).arg(playing).arg(tries).arg(BASS_ErrorGetCode()));
         }
 
         mixers[i] = mixer;

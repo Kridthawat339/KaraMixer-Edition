@@ -2190,6 +2190,10 @@ Please try again</translation>
         <translation type="unfinished">0</translation>
     </message>
     <message>
+        <source>อุปกรณ์เสียง (Midi device)</source>
+        <translation>Audio devices (Midi device)</translation>
+    </message>
+    <message>
         <location filename="../SettingsDialog.ui" line="1407"/>
         <location filename="../SettingsDialog.ui" line="1413"/>
         <source>อุปกรณ์เสียง</source>

@@ -246,6 +246,14 @@ bool AsioOutput::bufferInfo(int &mn, int &mx, int &pref, int &gran)
 }
 bool AsioOutput::rateSupported(int hz) { return g_active && BASS_ASIO_CheckRate((double)hz) != FALSE; }
 int AsioOutput::currentRate() { return g_active ? (int)(BASS_ASIO_GetRate() + 0.5) : 0; }
+void AsioOutput::waitSettle(int ms)
+{
+    if (g_stopTick == 0) return;
+    const DWORD since = GetTickCount() - g_stopTick;
+    if ((int)since < ms) Sleep((DWORD)(ms - (int)since));
+}
+bool AsioOutput::recentlyStopped(int ms) { return g_stopTick != 0 && (int)(GetTickCount() - g_stopTick) < ms; }
+void AsioOutput::logLine(const QString &msg) { asioLog(msg); }
 
 #else   // non-Windows: ASIO not available
 
@@ -266,5 +274,8 @@ QString AsioOutput::outputName(int) { return QString(); }
 bool AsioOutput::bufferInfo(int &, int &, int &, int &) { return false; }
 bool AsioOutput::rateSupported(int) { return false; }
 int AsioOutput::currentRate() { return 0; }
+void AsioOutput::waitSettle(int) {}
+bool AsioOutput::recentlyStopped(int) { return false; }
+void AsioOutput::logLine(const QString &) {}
 
 #endif

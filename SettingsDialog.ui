@@ -1427,7 +1427,7 @@
        <item>
         <widget class="QGroupBox" name="groupBox_7">
          <property name="title">
-          <string>อุปกรณ์เสียง</string>
+          <string>อุปกรณ์เสียง (Midi device)</string>
          </property>
          <layout class="QFormLayout" name="formLayout">
           <item row="0" column="0">
