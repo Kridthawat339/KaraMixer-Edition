@@ -22,6 +22,7 @@
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <functional>
 #include <memory>
 #include <QFrame>
