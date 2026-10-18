@@ -29,6 +29,10 @@ public:
     static bool vstInfo(const QString &vstPath, VSTNamePath *info);
     // VST2 file -> 1 entry, VST3 file -> 1 entry per audio class
     static bool vstInfos(const QString &vstPath, QList<VSTNamePath> *infos);
+    // scan safety net: plug-ins that hang / crash / nag are skipped on later scans
+    static void clearVstSkipList();
+    static void resetVstScanCounters();
+    static int  vstSkippedCount();
 
     static bool savePlaylist(const QString &filePath, const QList<Song*> &songs);
     static bool loadPlaylist(const QString &filePath, QList<Song*> &songs);

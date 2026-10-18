@@ -149,6 +149,9 @@ void VSTDirsDialog::on_btnRemove_clicked()
 
 void VSTDirsDialog::on_btnUpdate_clicked()
 {
+    if (QApplication::keyboardModifiers() & Qt::ControlModifier)
+        Utils::clearVstSkipList();          // Ctrl+click: scan the plug-ins that were skipped before as well
+    Utils::resetVstScanCounters();
     QStringList filesPath;
     QStringList filesName;
 
@@ -199,7 +202,9 @@ void VSTDirsDialog::on_btnUpdate_clicked()
         QApplication::processEvents();
     }
 
-    ui->lbVSTName->setText("");
+    ui->lbVSTName->setText(Utils::vstSkippedCount() > 0
+        ? QString::fromUtf8("ข้ามปลั๊กอินที่มีปัญหา %1 ตัว (Ctrl+คลิก อัพเดท เพื่อสแกนซ้ำ)").arg(Utils::vstSkippedCount())
+        : QString());
     QApplication::processEvents();
 
     synth->setVSTList(vstList);

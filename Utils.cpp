@@ -9,6 +9,13 @@
 #include <QFile>
 #include <QDateTime>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QSet>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "Config.h"
 #include "Midi/MidiHelper.h"
@@ -115,27 +122,190 @@ static void logVstScan(const QString &path, QProcess &process)
         << " err=" << QString::fromUtf8(process.readAllStandardError()).trimmed().replace('\n', ' ') << "\n";
 }
 
-bool Utils::vstInfo(const QString &vstPath, VSTNamePath *info)
-{
-    QStringList param;
-    param << vstPath;
+// ---- plug-in scan: safety net -------------------------------------------------------------------------------
+// Scanning loads every plug-in in a helper process. Some plug-ins open their own windows (licence / copy-protection
+// errors, "this host is not supported") that can hide behind the mixer and block the scan, or never return at all.
+// While the helper runs, any window it opens is closed automatically and written to the log; a plug-in that hangs,
+// crashes or only produced such windows is put on a skip list (~/.KaraMixer/vst-skip.txt) and not loaded again
+// until the file changes (or the list is cleared with Ctrl+click on the update button).
+namespace {
+    int g_vstSkipped = 0;
+    QSet<QString> g_skip;
+    bool g_skipLoaded = false;
 
-    QProcess process;
-    process.start(vstCheckerExe(), param);
-    process.waitForFinished(-1);
+    QString skipFilePath() { return QDir::homePath() + "/.KaraMixer/vst-skip.txt"; }
 
-    if (process.exitCode() != 0) {
-        logVstScan(vstPath, process);
-        return false;
+    QString skipKey(const QString &path)
+    {
+        QFileInfo fi(path);
+        return QDir::toNativeSeparators(fi.absoluteFilePath()) + "|" + QString::number(fi.size()) + "|"
+               + QString::number(fi.lastModified().toMSecsSinceEpoch());
     }
 
-    QString strout = process.readAllStandardOutput();
+    void loadSkip()
+    {
+        if (g_skipLoaded) return;
+        g_skipLoaded = true;
+        QFile f(skipFilePath());
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+        QTextStream in(&f);
+        in.setCodec("UTF-8");
+        while (!in.atEnd()) {
+            const QString l = in.readLine().trimmed();
+            if (!l.isEmpty()) g_skip.insert(l);
+        }
+    }
 
-    #ifdef _WIN32
-    QStringList vstStrInfo = strout.split("\r\n");
-    #else
-    QStringList vstStrInfo = strout.split("\n");
-    #endif
+    void addSkip(const QString &path)
+    {
+        loadSkip();
+        const QString key = skipKey(path);
+        if (g_skip.contains(key)) return;
+        g_skip.insert(key);
+        QFile f(skipFilePath());
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            QTextStream out(&f);
+            out.setCodec("UTF-8");
+            out << key << "\n";
+        }
+    }
+
+    void logVstLine(const QString &msg)
+    {
+        QFile f(QDir::homePath() + "/.KaraMixer/vstscan.log");
+        if (f.size() > 200000) f.remove();
+        if (!f.open(QIODevice::Append | QIODevice::Text)) return;
+        QTextStream out(&f);
+        out.setCodec("UTF-8");
+        out << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "  " << msg << "\n";
+    }
+
+#ifdef _WIN32
+    struct ChildText { QString text; };
+    BOOL CALLBACK enumChildProc(HWND h, LPARAM lp)
+    {
+        wchar_t cls[32] = {0};
+        GetClassNameW(h, cls, 31);
+        if (QString::fromWCharArray(cls).compare("Static", Qt::CaseInsensitive) == 0) {
+            wchar_t t[512] = {0};
+            GetWindowTextW(h, t, 511);
+            const QString s = QString::fromWCharArray(t).trimmed();
+            if (!s.isEmpty()) {
+                ChildText *c = reinterpret_cast<ChildText *>(lp);
+                if (!c->text.isEmpty()) c->text += " ";
+                c->text += s;
+            }
+        }
+        return TRUE;
+    }
+
+    struct WinCtx { DWORD pid; QStringList closed; };
+    BOOL CALLBACK enumWinProc(HWND h, LPARAM lp)
+    {
+        WinCtx *c = reinterpret_cast<WinCtx *>(lp);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (pid != c->pid || !IsWindowVisible(h))
+            return TRUE;
+        wchar_t title[256] = {0};
+        GetWindowTextW(h, title, 255);
+        ChildText ct;
+        EnumChildWindows(h, enumChildProc, reinterpret_cast<LPARAM>(&ct));
+        c->closed << QString("'%1' %2").arg(QString::fromWCharArray(title), ct.text);
+        PostMessageW(h, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0);   // OK / default button
+        PostMessageW(h, WM_CLOSE, 0, 0);
+        return TRUE;
+    }
+#endif
+
+    // close every visible window owned by the checker process; returns what was closed
+    QStringList closeCheckerWindows(qint64 pid)
+    {
+#ifdef _WIN32
+        if (pid <= 0) return QStringList();
+        WinCtx c;
+        c.pid = (DWORD)pid;
+        EnumWindows(enumWinProc, reinterpret_cast<LPARAM>(&c));
+        return c.closed;
+#else
+        Q_UNUSED(pid)
+        return QStringList();
+#endif
+    }
+
+    // runs the checker on one file; false = no usable answer (output of a good run is returned in *out)
+    bool runChecker(const QString &path, QByteArray *out)
+    {
+        loadSkip();
+        if (g_skip.contains(skipKey(path))) {
+            g_vstSkipped++;
+            logVstLine(path + "  skipped (problem plug-in, listed in vst-skip.txt)");
+            return false;
+        }
+
+        QProcess process;
+        process.start(vstCheckerExe(), QStringList() << path);
+        if (!process.waitForStarted(10000)) {
+            logVstLine(path + "  checker could not start: " + vstCheckerExe());
+            return false;
+        }
+
+        QElapsedTimer timer;
+        timer.start();
+        QStringList closed;
+        bool timedOut = false;
+        while (process.state() != QProcess::NotRunning && !process.waitForFinished(150)) {
+            if (process.state() == QProcess::NotRunning)
+                break;
+            closed << closeCheckerWindows(process.processId());
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            if (timer.elapsed() > 45000) {
+                timedOut = true;
+                process.kill();
+                process.waitForFinished(3000);
+                break;
+            }
+        }
+
+        for (const QString &w : closed)
+            logVstLine(path + "  closed a window opened by the plug-in: " + w);
+
+        const bool crashed = process.exitStatus() == QProcess::CrashExit;
+        if (timedOut) {
+            logVstLine(path + "  no answer after 45 s, plug-in skipped from now on");
+            addSkip(path);
+            return false;
+        }
+        if (process.exitCode() != 0 || crashed) {
+            logVstScan(path, process);
+            if (crashed || !closed.isEmpty())
+                addSkip(path);       // a plug-in that crashes or nags on every load is not scanned again
+            return false;
+        }
+        *out = process.readAllStandardOutput();
+        return true;
+    }
+}
+
+void Utils::clearVstSkipList()
+{
+    g_skip.clear();
+    g_skipLoaded = true;
+    QFile::remove(skipFilePath());
+}
+
+void Utils::resetVstScanCounters() { g_vstSkipped = 0; }
+int Utils::vstSkippedCount() { return g_vstSkipped; }
+
+bool Utils::vstInfo(const QString &vstPath, VSTNamePath *info)
+{
+    QByteArray raw;
+    if (!runChecker(vstPath, &raw))
+        return false;
+
+    const QStringList vstStrInfo = QString::fromLocal8Bit(raw).replace("\r\n", "\n").split('\n');
+    if (vstStrInfo.count() < 3)
+        return false;
 
     info->uniqueID = vstStrInfo[0].toUInt();
     info->vstName = vstStrInfo[1];
@@ -156,16 +326,11 @@ bool Utils::vstInfos(const QString &vstPath, QList<VSTNamePath> *infos)
         return true;
     }
 
-    QProcess process;
-    process.start(vstCheckerExe(), QStringList() << vstPath);
-    process.waitForFinished(-1);
-
-    if (process.exitCode() != 0) {
-        logVstScan(vstPath, process);
+    QByteArray raw;
+    if (!runChecker(vstPath, &raw))
         return false;
-    }
 
-    QString strout = QString::fromUtf8(process.readAllStandardOutput());
+    QString strout = QString::fromUtf8(raw);
     QStringList lines = strout.split('\n');
 
     for (int i = 0; i + 3 < lines.count(); i += 4)
