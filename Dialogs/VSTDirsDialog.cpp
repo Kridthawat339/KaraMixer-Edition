@@ -112,10 +112,19 @@ void VSTDirsDialog::on_btnClose_clicked()
 
 void VSTDirsDialog::on_btnAdd_clicked()
 {
-    QString dir = QFileDialog::getExistingDirectory(
-                this, "เลือกโฟลเดอร์ VST", Utils::LAST_OPEN_DIR,
-                QFileDialog::ShowDirsOnly
-                |QFileDialog::DontResolveSymlinks);
+    // Qt's own dialog (not the Windows one): it also lists the files of a folder (greyed), so the user can see that
+    // the plug-ins (*.dll / *.vst3) really are in the folder being chosen. The Windows folder dialog shows folders only.
+    QFileDialog dlg(this, "เลือกโฟลเดอร์ VST (เลือกโฟลเดอร์ที่มีไฟล์ .dll / .vst3 อยู่ข้างใน)", Utils::LAST_OPEN_DIR);
+    dlg.setFileMode(QFileDialog::Directory);
+    dlg.setOption(QFileDialog::DontUseNativeDialog, true);
+    dlg.setOption(QFileDialog::ShowDirsOnly, false);
+    dlg.setOption(QFileDialog::DontResolveSymlinks, true);
+    dlg.setNameFilter("VST (*.dll *.DLL *.vst3 *.VST3);;All files (*)");
+
+    if (dlg.exec() != QDialog::Accepted || dlg.selectedFiles().isEmpty())
+        return;
+
+    QString dir = dlg.selectedFiles().first();
 
     if (dir == "")
         return;

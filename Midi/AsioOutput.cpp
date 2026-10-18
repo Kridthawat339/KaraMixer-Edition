@@ -8,12 +8,19 @@
 #include <bassasio.h>
 
 #include <QString>
+#include <QFile>
+#include <QDir>
+#include <QDateTime>
+#include <QTextStream>
 #include <atomic>
+#include <thread>
 
 namespace {
     DWORD  g_mix    = 0;      // stereo float mixer fed to the ASIO driver
     bool   g_active = false;
     int    g_rate   = 44100;  // sample rate asked from the driver
+    std::atomic<int> g_gen{0};  // generation of the running ASIO session (stops the level probe)
+    DWORD  g_stopTick = 0;    // GetTickCount() of the last BASS_ASIO_Free (drivers need a moment before a re-init)
     std::atomic<float> g_gainTarget{1.0f};   // master volume x headroom (a decoding mixer ignores BASS_ATTRIB_VOL)
     float  g_gainCur = 1.0f;
 
@@ -35,6 +42,17 @@ namespace {
     QString g_error;
 }
 
+namespace {
+    void asioLog(const QString &msg)   // ~/.KaraMixer/asio.log : what the driver reported (for support)
+    {
+        QFile f(QDir::homePath() + "/.KaraMixer/asio.log");
+        if (f.size() > 200000) f.remove();
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            QTextStream(&f) << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "  " << msg << "\n";
+        }
+    }
+}
+
 QStringList AsioOutput::devices()
 {
     QStringList list;
@@ -52,8 +70,15 @@ bool AsioOutput::start(unsigned long source, int device)
     if (device < 0 || source == 0)
         return false;
 
+    // many ASIO drivers stay silent (or fail) when re-initialised right after being freed: wait for the driver to settle
+    if (g_stopTick != 0) {
+        const DWORD since = GetTickCount() - g_stopTick;
+        if (since < 600)
+            Sleep(600 - since);
+    }
+
     if (!BASS_ASIO_Init(device, BASS_ASIO_THREAD)) {
-        g_error = QString("ASIO init failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
+        asioLog("FAIL"); g_error = QString("ASIO init failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
         return false;
     }
 
@@ -61,7 +86,7 @@ bool AsioOutput::start(unsigned long source, int device)
     {
         BASS_ASIO_INFO ai;
         if (BASS_ASIO_GetInfo(&ai) && ai.outputs < 2) {
-            g_error = QString("This ASIO driver has no usable stereo output (%1 output channel(s)). "
+            asioLog("FAIL"); g_error = QString("This ASIO driver has no usable stereo output (%1 output channel(s)). "
                               "For ASIO4ALL: open its panel from the tray icon and switch the output device on.").arg(ai.outputs);
             BASS_ASIO_Free();
             return false;
@@ -77,18 +102,25 @@ bool AsioOutput::start(unsigned long source, int device)
     // multi-channel main mixer -> stereo for ASIO outputs 1+2
     g_mix = BASS_Mixer_StreamCreate((DWORD)rate, 2, BASS_STREAM_DECODE | BASS_SAMPLE_FLOAT);
     if (!g_mix || !BASS_Mixer_StreamAddChannel(g_mix, (DWORD)source, BASS_MIXER_CHAN_DOWNMIX)) {
-        g_error = QString("ASIO mixer failed (error %1)").arg(BASS_ErrorGetCode());
+        asioLog("FAIL"); g_error = QString("ASIO mixer failed (error %1)").arg(BASS_ErrorGetCode());
         if (g_mix) BASS_StreamFree(g_mix);
         g_mix = 0;
         BASS_ASIO_Free();
         return false;
     }
 
+    {
+        BASS_ASIO_INFO ai2; BASS_ASIO_GetInfo(&ai2);
+        BASS_CHANNELINFO ci2; BASS_ChannelGetInfo((DWORD)source, &ci2);
+        asioLog(QString("init ok: driver=%1 outputs=%2 rate=%3 bufmin=%4 | source chans=%5 freq=%6 flags=0x%7 | gain=%8")
+                .arg(QString::fromLocal8Bit(ai2.name)).arg(ai2.outputs).arg(rate).arg(ai2.bufmin)
+                .arg(ci2.chans).arg(ci2.freq).arg(ci2.flags, 0, 16).arg(g_gainTarget.load()));
+    }
     g_gainCur = g_gainTarget.load();
     BASS_ChannelSetDSP(g_mix, gainDsp, nullptr, 0);
 
     if (!BASS_ASIO_ChannelEnableBASS(FALSE, 0, g_mix, TRUE)) {
-        g_error = QString("ASIO channel failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
+        asioLog("FAIL"); g_error = QString("ASIO channel failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
         BASS_StreamFree(g_mix);
         g_mix = 0;
         BASS_ASIO_Free();
@@ -96,22 +128,25 @@ bool AsioOutput::start(unsigned long source, int device)
     }
 
     if (!BASS_ASIO_Start(0, 0)) {
-        g_error = QString("ASIO start failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
+        asioLog("FAIL"); g_error = QString("ASIO start failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
         BASS_ASIO_Free();
         BASS_StreamFree(g_mix);
         g_mix = 0;
         return false;
     }
 
+    asioLog(QString("started: asio rate=%1 cpu=%2").arg(BASS_ASIO_GetRate()).arg(BASS_ASIO_GetCPU()));
     g_active = true;
     return true;
 }
 
 void AsioOutput::stop()
 {
+    ++g_gen;
     if (g_active) {
         BASS_ASIO_Stop();
         BASS_ASIO_Free();
+        g_stopTick = GetTickCount();
         g_active = false;
     }
     if (g_mix) {

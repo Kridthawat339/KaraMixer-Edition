@@ -1,1 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="bg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#b0104a"/><stop offset="1" stop-color="#ff8a1e"/></linearGradient><radialGradient id="kn" cx="0.38" cy="0.35" r="0.75"><stop offset="0" stop-color="#5a5f76"/><stop offset="0.5" stop-color="#23252f"/><stop offset="1" stop-color="#0e0f16"/></radialGradient></defs><rect width="512" height="512" rx="115" fill="url(#bg)"/><line x1="116.3" y1="400.7" x2="95.1" y2="421.9" stroke="#fff" stroke-opacity="1" stroke-width="13"/><line x1="87.6" y1="364.2" x2="72.7" y2="373.3" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="68.2" y1="322.0" x2="51.5" y2="327.4" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="59.1" y1="276.5" x2="41.7" y2="277.9" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="60.9" y1="230.1" x2="43.6" y2="227.4" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="73.5" y1="185.4" x2="45.8" y2="173.9" stroke="#fff" stroke-opacity="1" stroke-width="13"/><line x1="96.2" y1="144.9" x2="82.1" y2="134.6" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="127.7" y1="110.8" x2="116.4" y2="97.5" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="166.3" y1="85.0" x2="158.4" y2="69.4" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="209.9" y1="69.0" x2="205.8" y2="51.9" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="256.0" y1="63.5" x2="256.0" y2="33.5" stroke="#fff" stroke-opacity="1" stroke-width="13"/><line x1="302.1" y1="69.0" x2="306.2" y2="51.9" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="345.7" y1="85.0" x2="353.6" y2="69.4" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="384.3" y1="110.8" x2="395.6" y2="97.5" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="415.8" y1="144.9" x2="429.9" y2="134.6" stroke="#fff" stroke-opacity="1" stroke-width="9"/><line x1="438.5" y1="185.4" x2="466.2" y2="173.9" stroke="#fff" stroke-opacity="0.35" stroke-width="13"/><line x1="451.1" y1="230.1" x2="468.4" y2="227.4" stroke="#fff" stroke-opacity="0.35" stroke-width="9"/><line x1="452.9" y1="276.5" x2="470.3" y2="277.9" stroke="#fff" stroke-opacity="0.35" stroke-width="9"/><line x1="443.8" y1="322.0" x2="460.5" y2="327.4" stroke="#fff" stroke-opacity="0.35" stroke-width="9"/><line x1="424.4" y1="364.2" x2="439.3" y2="373.3" stroke="#fff" stroke-opacity="0.35" stroke-width="9"/><line x1="395.7" y1="400.7" x2="416.9" y2="421.9" stroke="#fff" stroke-opacity="0.35" stroke-width="13"/><circle cx="256" cy="261" r="165" fill="url(#kn)" stroke="#fff" stroke-opacity=".27"/><line x1="292.4" y1="234.5" x2="373.3" y2="175.8" stroke="#fff" stroke-width="17" stroke-linecap="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46d3ff"/><stop offset=".55" stop-color="#3a6bff"/><stop offset="1" stop-color="#7a3df0"/></linearGradient>
+<linearGradient id="cap" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9aa6c8"/><stop offset=".45" stop-color="#f4f7ff"/><stop offset="1" stop-color="#7d89ad"/></linearGradient>
+<linearGradient id="acc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6d6"/><stop offset="1" stop-color="#3b82f6"/></linearGradient>
+<linearGradient id="warm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff5a4d"/></linearGradient>
+<linearGradient id="knob" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe6ff"/></linearGradient>
+<clipPath id="cc"><rect x="372" y="110" width="280" height="430" rx="140"/></clipPath>
+</defs>
+<rect x="24" y="24" width="976" height="976" rx="220" fill="url(#bg)"/>
+<rect x="30" y="30" width="964" height="964" rx="214" fill="none" stroke="#ffffff" stroke-opacity=".45" stroke-width="8"/>
+<!-- dynamic stage mic -->
+<defs>
+<radialGradient id="ball" cx=".38" cy=".32" r=".8"><stop offset="0" stop-color="#ffffff"/><stop offset=".55" stop-color="#b8c2de"/><stop offset="1" stop-color="#6b7799"/></radialGradient>
+<linearGradient id="body" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#10153a"/><stop offset=".35" stop-color="#3b4580"/><stop offset=".6" stop-color="#1c2252"/><stop offset="1" stop-color="#0b0f2c"/></linearGradient>
+<clipPath id="ballc"><circle cx="512" cy="252" r="158"/></clipPath>
+</defs>
+<path d="M418 420H606L580 700Q578 716 562 716H462Q446 716 444 700Z" fill="url(#body)" stroke="#ffffff" stroke-opacity=".7" stroke-width="8"/>
+<rect x="404" y="404" width="216" height="46" rx="14" fill="url(#warm)"/>
+<rect x="404" y="404" width="216" height="14" rx="7" fill="#fff" fill-opacity=".35"/>
+<rect x="470" y="545" width="84" height="26" rx="13" fill="#0a0d1d" stroke="#ffffff" stroke-width="6"/>
+<circle cx="512" cy="252" r="158" fill="url(#ball)"/>
+<g clip-path="url(#ballc)" stroke="#26307a" stroke-opacity=".75" stroke-width="12">
+<path d="M300 120L720 540M300 190L720 610M300 260L720 680M300 50L720 470M300 -20L720 400M300 330L720 750M300 400L720 820"/>
+<path d="M720 120L300 540M720 190L300 610M720 260L300 680M720 50L300 470M720 -20L300 400M720 330L300 750M720 400L300 820"/>
+</g>
+<circle cx="512" cy="252" r="158" fill="none" stroke="#ffffff" stroke-width="9"/>
+<ellipse cx="455" cy="190" rx="40" ry="24" transform="rotate(-35 455 190)" fill="#fff" fill-opacity=".55"/>
+<!-- faders -->
+<rect x="140" y="730" width="744" height="224" rx="48" fill="#0b1240" fill-opacity=".38"/>
+<g stroke="#ffffff" stroke-opacity=".75" stroke-width="16" stroke-linecap="round">
+<path d="M262 770V914M387 770V914M512 770V914M637 770V914M762 770V914"/>
+</g>
+<g>
+<rect x="224" y="842" width="76" height="40" rx="12" fill="url(#knob)"/><rect x="224" y="858" width="76" height="8" fill="#3a4aa8"/>
+<rect x="349" y="778" width="76" height="40" rx="12" fill="url(#knob)"/><rect x="349" y="794" width="76" height="8" fill="#3a4aa8"/>
+<rect x="474" y="816" width="76" height="40" rx="12" fill="url(#warm)"/><rect x="474" y="832" width="76" height="8" fill="#7a1f17" fill-opacity=".55"/>
+<rect x="599" y="850" width="76" height="40" rx="12" fill="url(#knob)"/><rect x="599" y="866" width="76" height="8" fill="#3a4aa8"/>
+<rect x="724" y="790" width="76" height="40" rx="12" fill="url(#knob)"/><rect x="724" y="806" width="76" height="8" fill="#3a4aa8"/>
+</g>
+</svg>

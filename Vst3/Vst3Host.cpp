@@ -152,6 +152,8 @@ static Module *acquireModule(const std::string &path, std::string *err)
 
 #ifdef _WIN32
     std::wstring wpath = utf8ToWide(path);
+    for (wchar_t &ch : wpath)       // LOAD_WITH_ALTERED_SEARCH_PATH wants backslashes (the path comes from Qt with '/')
+        if (ch == L'/') ch = L'\\';
     {
         // Folder style module: Foo.vst3/Contents/<arch>-win/Foo.vst3
         DWORD attr = GetFileAttributesW(wpath.c_str());
@@ -159,9 +161,9 @@ static Module *acquireModule(const std::string &path, std::string *err)
             size_t sl = wpath.find_last_of(L"/\\");
             std::wstring leaf = (sl == std::wstring::npos) ? wpath : wpath.substr(sl + 1);
 #ifdef _WIN64
-            wpath += L"/Contents/x86_64-win/" + leaf;
+            wpath += L"\\Contents\\x86_64-win\\" + leaf;
 #else
-            wpath += L"/Contents/x86-win/" + leaf;
+            wpath += L"\\Contents\\x86-win\\" + leaf;
 #endif
         }
     }

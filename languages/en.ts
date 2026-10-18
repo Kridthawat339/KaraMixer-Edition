@@ -1550,8 +1550,8 @@ Please try again</translation>
     </message>
     <message>
         <location filename="../Dialogs/MapSoundfontDialog.ui" line="97"/>
-        <source>10. ดนตรีไทย</source>
-        <translation type="unfinished">10. Native</translation>
+        <source>10. ดนตรีสด</source>
+        <translation>10. Live Music</translation>
     </message>
     <message>
         <location filename="../Dialogs/MapSoundfontDialog.ui" line="111"/>
@@ -2490,8 +2490,8 @@ Please try again</translation>
     </message>
     <message>
         <location filename="../Dialogs/SynthMixerDialog.ui" line="288"/>
-        <source>10. ดนตรีไทย</source>
-        <translation type="unfinished">10. Native</translation>
+        <source>10. ดนตรีสด</source>
+        <translation>10. Live Music</translation>
     </message>
     <message>
         <location filename="../Dialogs/SynthMixerDialog.ui" line="328"/>

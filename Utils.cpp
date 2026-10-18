@@ -6,6 +6,9 @@
 #include <QTextStream>
 #include <QProcess>
 #include <QDir>
+#include <QFile>
+#include <QDateTime>
+#include <QCoreApplication>
 
 #include "Config.h"
 #include "Midi/MidiHelper.h"
@@ -89,17 +92,42 @@ uint Utils::concurentThreadsSupported()
     return std::thread::hardware_concurrency();
 }
 
+// VSTChecker is looked up next to the program (not in the current directory) and every failed check is logged,
+// so a plug-in that does not show up in the list can be explained (~/.KaraMixer/vstscan.log).
+static QString vstCheckerExe()
+{
+    return QCoreApplication::applicationDirPath() + "/" + QString(VST_CHECKER_NAME);
+}
+
+static void logVstScan(const QString &path, QProcess &process)
+{
+    QFile f(QDir::homePath() + "/.KaraMixer/vstscan.log");
+    if (f.size() > 200000)
+        f.remove();
+    if (!f.open(QIODevice::Append | QIODevice::Text))
+        return;
+    QTextStream out(&f);
+    out.setCodec("UTF-8");
+    out << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "  " << path
+        << "  exit=" << process.exitCode() << " status=" << (process.exitStatus() == QProcess::CrashExit ? "crash" : "normal")
+        << " error=" << int(process.error())
+        << " out=" << QString::fromUtf8(process.readAllStandardOutput()).trimmed().replace('\n', ' ')
+        << " err=" << QString::fromUtf8(process.readAllStandardError()).trimmed().replace('\n', ' ') << "\n";
+}
+
 bool Utils::vstInfo(const QString &vstPath, VSTNamePath *info)
 {
     QStringList param;
     param << vstPath;
 
     QProcess process;
-    process.start(VST_CHECKER_NAME, param);
+    process.start(vstCheckerExe(), param);
     process.waitForFinished(-1);
 
-    if (process.exitCode() != 0)
+    if (process.exitCode() != 0) {
+        logVstScan(vstPath, process);
         return false;
+    }
 
     QString strout = process.readAllStandardOutput();
 
@@ -129,11 +157,13 @@ bool Utils::vstInfos(const QString &vstPath, QList<VSTNamePath> *infos)
     }
 
     QProcess process;
-    process.start(VST_CHECKER_NAME, QStringList() << vstPath);
+    process.start(vstCheckerExe(), QStringList() << vstPath);
     process.waitForFinished(-1);
 
-    if (process.exitCode() != 0)
+    if (process.exitCode() != 0) {
+        logVstScan(vstPath, process);
         return false;
+    }
 
     QString strout = QString::fromUtf8(process.readAllStandardOutput());
     QStringList lines = strout.split('\n');

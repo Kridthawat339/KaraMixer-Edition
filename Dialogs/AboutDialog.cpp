@@ -21,8 +21,11 @@ AboutDialog::AboutDialog(QWidget *parent) :
     QString version = QT_VERSION_STR;
     ui->lbQtVer->setText("Using Qt version " + version);
     // GPLv3 requires keeping the original copyright / license notice.
-    ui->lbCopyright->setText(QString(VER_LEGALCOPYRIGHT_STR) +
-        "\nDerived from Handy Karaoke, Copyright (C) 2017-2019 pie62 (GPLv3)");
+    ui->lbCopyright->setTextFormat(Qt::RichText);
+    ui->lbCopyright->setText(QString::fromUtf8(
+        "<div align='center'>%1<br>"
+        "<span style='font-size:8pt; color:gray;'>Based on Handy Karaoke %2 2017%3 2019 pie62 (GPLv3)</span></div>")
+        .arg(QString::fromUtf8(VER_LEGALCOPYRIGHT_STR), QString(QChar(0x00A9)), QString(QChar(0x2013))));
     ui->lbCopyright->setWordWrap(true);
 
     // PRO licence (tied to this machine's hardware ID)

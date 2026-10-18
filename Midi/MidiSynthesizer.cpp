@@ -234,7 +234,8 @@ bool MidiSynthesizer::open()
 
     openned = true;
 
-    DWORD f = useFloat ? BASS_SAMPLE_FLOAT : 0;
+    // ASIO is fed in float anyway: a float decoding mixer needs no restart when the limiter / auto level is switched on
+    DWORD f = (useFloat || asioDev >= 0) ? BASS_SAMPLE_FLOAT : 0;
 
     // create mixer, bus
     for (int i=0; i<mixers.count(); i++)
@@ -677,7 +678,7 @@ void MidiSynthesizer::setMasterParams(const MasterDsp::Params &p)
         }
     }
     // a 16-bit mixer clips before any DSP sees the signal: the limiter / auto level need float to do their job
-    if ((p.limOn || p.autoOn || p.masterOn) && !useFloat && openned)
+    if ((p.limOn || p.autoOn || p.masterOn) && !useFloat && openned && asioDev < 0)
         setUsetFloattingPoint(true);
 }
 
