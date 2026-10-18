@@ -67,6 +67,7 @@ signals:
 protected:
     void mouseDoubleClickEvent(QMouseEvent *event);
     bool eventFilter(QObject *obj, QEvent *e) override;
+    void changeEvent(QEvent *e) override;
 
 private slots:
     void onBtnMuteClicked();
@@ -90,6 +91,9 @@ private:
     class QLabel *lbRevCap = nullptr;
     class QPushButton *lbTrim = nullptr;
     double trimVal = 0.0;
+    class QPushButton *trimDn = nullptr;
+    class QPushButton *trimUp = nullptr;
+    void applyTrimStyle();
     void setTrimInternal(double db, bool notify);
     QWidget *knobRow = nullptr;
     int baseHeight = -1;
