@@ -40,6 +40,8 @@
 #ifndef __linux__
 #include "BASSFX/VSTFX.h"
 #include "Vst3/BassVst3.h"
+#include <QScreen>
+#include <QGuiApplication>
 #endif
 #include "Widgets/ProMenuBadge.h"
 #include "Widgets/ProLicense.h"
@@ -2029,6 +2031,16 @@ void MainWindow::showSettingsDialog()
     SettingsDialog d(dialogParent(), this);
     d.setModal(true);
     d.adjustSize();
+    {   // never taller / wider than the screen it opens on (the device tab scrolls inside)
+        QScreen *sc = dialogParent() ? dialogParent()->screen() : QGuiApplication::primaryScreen();
+        if (sc) {
+            const QRect av = sc->availableGeometry();
+            const int maxH = qMax(300, av.height() - 100);   // 36 px title bar + window border + taskbar margin
+            const int maxW = qMax(400, av.width() - 20);
+            d.setMaximumHeight(maxH);
+            d.resize(qMin(d.width(), maxW), qMin(d.height(), maxH));
+        }
+    }
     d.setMinimumSize(d.size());
     d.exec();
 }

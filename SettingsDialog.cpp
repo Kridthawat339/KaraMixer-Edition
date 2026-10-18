@@ -21,6 +21,7 @@
 #include <QGridLayout>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QScrollArea>
 #include <functional>
 #include <memory>
 #include <QFrame>
@@ -267,6 +268,23 @@ void SettingsDialog::setLabelFontInfo(QFont *font)
     if (font->strikeOut()) fStyle += " StrikeOut";
 
     ui->leFont->setText(" " + fFamily + " " + fStyle + " " + fSize);
+}
+
+namespace {
+// A scroll area that asks for the full height of its content (so a big screen shows everything, as before) but can
+// shrink to almost nothing (so a small screen scrolls instead of the dialog growing past the screen edge).
+class FitScrollArea : public QScrollArea
+{
+public:
+    explicit FitScrollArea(QWidget *parent = nullptr) : QScrollArea(parent) {}
+    QSize sizeHint() const override
+    {
+        if (QWidget *w = widget())
+            return w->sizeHint() + QSize(verticalScrollBar()->sizeHint().width() + 4, 4);
+        return QScrollArea::sizeHint();
+    }
+    QSize minimumSizeHint() const override { return QSize(300, 120); }
+};
 }
 
 void SettingsDialog::initDeviceTab()
@@ -683,6 +701,30 @@ void SettingsDialog::initDeviceTab()
         });
 
         refresh();
+    }
+
+    // The device tab got taller (Audio device panel): put its content in a scroll area so the settings window can
+    // never be taller than the screen (small / high-DPI laptops); a big screen still shows everything at once.
+    if (QVBoxLayout *oldLay = qobject_cast<QVBoxLayout *>(ui->tab_4->layout()))
+    {
+        QWidget *inner = new QWidget;
+        QVBoxLayout *nl = new QVBoxLayout(inner);
+        int ml, mt, mr, mb;
+        oldLay->getContentsMargins(&ml, &mt, &mr, &mb);
+        nl->setContentsMargins(ml, mt, mr, mb);
+        nl->setSpacing(oldLay->spacing());
+        while (oldLay->count() > 0)
+            nl->addItem(oldLay->takeAt(0));
+        delete oldLay;
+
+        FitScrollArea *sa = new FitScrollArea(ui->tab_4);
+        sa->setWidgetResizable(true);
+        sa->setFrameShape(QFrame::NoFrame);
+        sa->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        sa->setWidget(inner);
+        QVBoxLayout *tl = new QVBoxLayout(ui->tab_4);
+        tl->setContentsMargins(0, 0, 0, 0);
+        tl->addWidget(sa);
     }
 
     // Mixer edition: karaoke-player settings (playlist, lyrics, song database,
