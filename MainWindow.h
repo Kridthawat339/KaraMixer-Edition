@@ -34,6 +34,7 @@ class RemoteServer;
 
 namespace Ui {
 class MainWindow;
+class MixerAutoHide;
 }
 
 class MainWindow : public QMainWindow
@@ -62,6 +63,8 @@ public:
 
     // Synth Mixer
     SynthMixerDialog* synthMixerDialog() { return synthMix; }
+    // Auto-hide of the mixer while the karaoke program is used (Settings); delay in seconds
+    void setMixerAutoHide(bool on, double delaySec, const QString &program);
     QWidget* dialogParent();
     void showContextMenuAt(const QPoint &globalPos);
     void saveConfigFile();
@@ -197,6 +200,7 @@ private:
 
     // Synth Mixer
     SynthMixerDialog *synthMix;
+    MixerAutoHide *autoHide = nullptr;
 
     #ifdef _WIN32
     QWinTaskbarButton *taskbarButton;

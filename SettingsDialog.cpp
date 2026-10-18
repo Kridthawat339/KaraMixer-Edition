@@ -28,6 +28,8 @@
 #include <QFrame>
 #include <QPushButton>
 #include <QHBoxLayout>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
 #include "Dialogs/MapSoundfontDialog.h"
 #include "Dialogs/MapChannelDialog.h"
 #include "Dialogs/Equalizer31BandDialog.h"
@@ -702,6 +704,53 @@ void SettingsDialog::initDeviceTab()
         });
 
         refresh();
+    }
+
+    // Auto hide of the mixer while the karaoke program is used
+    if (QVBoxLayout *vl2 = qobject_cast<QVBoxLayout *>(ui->tab_4->layout()))
+    {
+        QGroupBox *ah = new QGroupBox(QString::fromUtf8("ซ่อนมิกเซอร์อัตโนมัติ (Auto hide)"), ui->tab_4);
+        QGridLayout *g = new QGridLayout(ah);
+        QCheckBox *chOn = new QCheckBox(QString::fromUtf8("ซ่อนมิกเซอร์เมื่อใช้งานโปรแกรมคาราโอเกะ (คลิก/พิมพ์ในโปรแกรมคาราโอเกะ)"), ah);
+        QDoubleSpinBox *spDelay = new QDoubleSpinBox(ah);
+        spDelay->setRange(0.5, 60.0);
+        spDelay->setSingleStep(0.5);
+        spDelay->setDecimals(1);
+        spDelay->setSuffix(QString::fromUtf8(" วินาที"));
+        QLineEdit *edProg = new QLineEdit(ah);
+        edProg->setPlaceholderText(QString::fromUtf8("เช่น karaoke.exe หรือส่วนของชื่อหน้าต่าง (เว้นว่าง = ทุกโปรแกรม)"));
+        QLabel *note = new QLabel(QString::fromUtf8(
+            "เมื่อเลิกใช้งาน (ไม่มีการพิมพ์/คลิก) หรือสลับไปโปรแกรมอื่น มิกเซอร์จะกลับมาเองหลังเวลาหน่วงที่ตั้งไว้ "
+            "แยกหลายชื่อด้วย ; ได้"), ah);
+        note->setWordWrap(true);
+        g->addWidget(chOn, 0, 0, 1, 2);
+        g->addWidget(new QLabel(QString::fromUtf8("หน่วงเวลาก่อนมิกเซอร์กลับมา :"), ah), 1, 0, Qt::AlignRight | Qt::AlignVCenter);
+        g->addWidget(spDelay, 1, 1, Qt::AlignLeft);
+        g->addWidget(new QLabel(QString::fromUtf8("โปรแกรมคาราโอเกะ :"), ah), 2, 0, Qt::AlignRight | Qt::AlignVCenter);
+        g->addWidget(edProg, 2, 1);
+        g->addWidget(note, 3, 0, 1, 2);
+        g->setColumnStretch(1, 1);
+
+        chOn->setChecked(settings->value("MixerAutoHide", false).toBool());
+        spDelay->setValue(settings->value("MixerAutoHideDelay", 3.0).toDouble());
+        edProg->setText(settings->value("MixerAutoHideProgram", "").toString());
+        spDelay->setEnabled(chOn->isChecked());
+        edProg->setEnabled(chOn->isChecked());
+
+        auto apply = [this, chOn, spDelay, edProg]() {
+            settings->setValue("MixerAutoHide", chOn->isChecked());
+            settings->setValue("MixerAutoHideDelay", spDelay->value());
+            settings->setValue("MixerAutoHideProgram", edProg->text().trimmed());
+            settings->sync();
+            mainWin->setMixerAutoHide(chOn->isChecked(), spDelay->value(), edProg->text().trimmed());
+        };
+        connect(chOn, &QCheckBox::toggled, this, [=](bool on) { spDelay->setEnabled(on); edProg->setEnabled(on); apply(); });
+        connect(spDelay, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [=](double) { apply(); });
+        connect(edProg, &QLineEdit::editingFinished, this, [=]() { apply(); });
+        int at = vl2->count();
+        if (at > 0 && vl2->itemAt(at - 1)->spacerItem())
+            --at;                                   // keep the trailing spacer at the bottom
+        vl2->insertWidget(at, ah);
     }
 
     // The device tab got taller (Audio device panel): put its content in a scroll area so the settings window can

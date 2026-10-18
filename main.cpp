@@ -120,6 +120,12 @@ int main(int argc, char *argv[])
     mixer->setWindowTitle("KaraMixer Edition");
     w.hide();
     mixer->show();
+    {   // auto-hide of the mixer while the karaoke program is used (Settings)
+        QSettings ahs(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+        w.setMixerAutoHide(ahs.value("MixerAutoHide", false).toBool(),
+                           ahs.value("MixerAutoHideDelay", 3.0).toDouble(),
+                           ahs.value("MixerAutoHideProgram", "").toString());
+    }
 
     splash->finish(mixer);
 

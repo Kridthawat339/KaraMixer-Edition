@@ -24,6 +24,7 @@
 #include "MedleyLoader.h"
 #include "DrumPadsKey.h"
 #include "SettingsDialog.h"
+#include "Widgets/MixerAutoHide.h"
 #include "Midi/MidiFile.h"
 #include "Midi/HNKFile.h"
 #include "Midi/AsioOutput.h"
@@ -1795,6 +1796,13 @@ void MainWindow::applyConfigLive()
 
     ui->sliderVolume->setValue(player->volume());
     synthMix->setSkipSave(false);
+}
+
+void MainWindow::setMixerAutoHide(bool on, double delaySec, const QString &program)
+{
+    if (!autoHide)
+        autoHide = new MixerAutoHide(synthMix, this);
+    autoHide->configure(on, delaySec, program);
 }
 
 QWidget* MainWindow::dialogParent()
