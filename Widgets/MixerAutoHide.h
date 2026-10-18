@@ -34,7 +34,7 @@ class MixerAutoHide : public QObject
 public:
     explicit MixerAutoHide(QWidget *mixer, QObject *parent = nullptr) : QObject(parent), mixer(mixer)
     {
-        timer.setInterval(150);
+        timer.setInterval(40);
         QObject::connect(&timer, &QTimer::timeout, this, [this]() { tick(); });
     }
 
@@ -68,6 +68,8 @@ private:
     QStringList names;
     QElapsedTimer awayClock;     // how long the karaoke program has not been in front
     bool awayRunning = false;
+    QElapsedTimer lastAct;       // last click / key press in the karaoke program
+    bool haveAct = false;
 
     void restore()
     {
@@ -139,23 +141,27 @@ private:
         }
         awayRunning = false;
 
-        LASTINPUTINFO li;
-        li.cbSize = sizeof(li);
-        if (!GetLastInputInfo(&li))
-            return;
-        const DWORD idle = GetTickCount() - li.dwTime;
-        const bool active = idle < DWORD(delayMs);
-
-        if (active) {
-            // the mouse resting over the mixer is not "using the karaoke program"
-            if (!hiddenByUs && mixer->isVisible() && mixer->frameGeometry().contains(QCursor::pos()))
-                return;
+        // activity = a mouse click (outside the mixer) or a key press; moving the mouse does not count
+        bool act = false;
+        const bool overMixer = mixer->isVisible() && mixer->frameGeometry().contains(QCursor::pos());
+        if (!overMixer)
+            for (int vk : { VK_LBUTTON, VK_RBUTTON, VK_MBUTTON })
+                if (GetAsyncKeyState(vk) & 0x8001) { act = true; break; }
+        if (!act)
+            for (int vk = 8; vk < 255; ++vk) {
+                if (vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2)
+                    continue;
+                if (GetAsyncKeyState(vk) & 0x8001) { act = true; break; }
+            }
+        if (act) {
+            lastAct.start();
+            haveAct = true;
             if (!hiddenByUs && mixer->isVisible()) {
                 hiddenByUs = true;
                 mixer->hide();
             }
-        } else if (hiddenByUs) {
-            restore();                          // idle long enough: back again
+        } else if (hiddenByUs && (!haveAct || lastAct.elapsed() >= delayMs)) {
+            restore();                          // no click / key for the delay: back again
         }
     }
 #else
