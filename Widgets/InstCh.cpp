@@ -230,7 +230,7 @@ InstCh::InstCh(QWidget *parent) :
             QHBoxLayout *th = new QHBoxLayout(tr);
             th->setContentsMargins(0, 2, 0, 0);
             th->setSpacing(1);
-            QPushButton *dn = new QPushButton(QStringLiteral("-"), tr);
+            QPushButton *dn = new QPushButton(QString(QChar(0x2212)), tr);   // true minus sign: as wide as the plus
             QPushButton *up = new QPushButton(QStringLiteral("+"), tr);
             lbTrim = new QPushButton(trimText(0.0), tr);
             for (QPushButton *b : { dn, up, lbTrim }) {
@@ -239,6 +239,8 @@ InstCh::InstCh(QWidget *parent) :
             }
             dn->setFixedSize(16, 15);
             up->setFixedSize(16, 15);
+            dn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+            up->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
             lbTrim->setFixedHeight(15);
             lbTrim->setMinimumWidth(0);
             lbTrim->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);   // takes what is left between - and +

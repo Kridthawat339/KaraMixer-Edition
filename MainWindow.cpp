@@ -293,6 +293,8 @@ MainWindow::MainWindow(QWidget *parent) :
         int asio = settings->value("AsioDevice", -1).toInt();
         if (asio >= AsioOutput::devices().count())
             asio = -1;
+        AsioOutput::setPairMask(settings->value("AsioPairMask", 1).toUInt());
+        AsioOutput::setBufferSize(settings->value("AsioBufferSamples", 0).toInt());
         synth->setAsioDevice(asio);
 
         // audio quality: the higher settings are PRO options (Free = 44.1 kHz, linear interpolation, 256 voices)

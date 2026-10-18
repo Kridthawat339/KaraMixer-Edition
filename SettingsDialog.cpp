@@ -19,6 +19,12 @@
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QSignalBlocker>
+#include <QTimer>
+#include <functional>
+#include <memory>
+#include <QFrame>
+#include <QPushButton>
+#include <QHBoxLayout>
 #include "Dialogs/MapSoundfontDialog.h"
 #include "Dialogs/MapChannelDialog.h"
 #include "Dialogs/Equalizer31BandDialog.h"
@@ -387,8 +393,13 @@ void SettingsDialog::initDeviceTab()
             "ค่าความหน่วงต่ำกว่า 50 ms ใช้ได้เฉพาะ PRO  •  ความถี่สูงจะเห็นผลเต็มที่เมื่อใช้ ASIO หรือซาวด์การ์ดที่รองรับ"), box);
         note->setWordWrap(true);
 
-        g->addWidget(new QLabel(QString::fromUtf8("ความถี่เอาต์พุต (Sample rate) :"), box), 0, 0);
-        g->addWidget(cbRate, 0, 1);
+        {   // the sample rate now lives in the "Audio device" panel; this old row stays hidden
+            QLabel *lbOldRate = new QLabel(QString::fromUtf8("ความถี่เอาต์พุต (Sample rate) :"), box);
+            lbOldRate->setVisible(false);
+            cbRate->setVisible(false);
+            g->addWidget(lbOldRate, 0, 0);
+            g->addWidget(cbRate, 0, 1);
+        }
         g->addWidget(chSinc, 1, 0, 1, 2);
         g->addWidget(new QLabel(QString::fromUtf8("จำนวนเสียงสูงสุด (Voices) :"), box), 2, 0);
         g->addWidget(cbVoices, 2, 1);
@@ -425,6 +436,252 @@ void SettingsDialog::initDeviceTab()
             synth->setVoices(n);
             settings->setValue("SynthVoices", n);
         });
+    }
+
+    // ---- Audio device panel: device type / output / test / active output channels / sample rate / buffer size ----
+    if (QVBoxLayout *dvl = qobject_cast<QVBoxLayout *>(ui->groupBox_12->parentWidget()->layout()))
+    {
+        QWidget *host = ui->groupBox_12->parentWidget();
+        QGroupBox *dev = new QGroupBox(QString::fromUtf8("อุปกรณ์เสียง (Audio device)"), host);
+        QGridLayout *dg = new QGridLayout(dev);
+
+        QComboBox *cbType = new QComboBox(dev);
+        QComboBox *cbOut = new QComboBox(dev);
+        QPushButton *btnTest = new QPushButton(QStringLiteral("Test"), dev);
+        QFrame *chFrame = new QFrame(dev);
+        chFrame->setFrameShape(QFrame::StyledPanel);
+        QVBoxLayout *chLay = new QVBoxLayout(chFrame);
+        chLay->setContentsMargins(6, 4, 6, 4);
+        chLay->setSpacing(2);
+        QComboBox *cbSr = new QComboBox(dev);
+        QComboBox *cbBuf = new QComboBox(dev);
+        QLabel *note = new QLabel(dev);
+        note->setWordWrap(true);
+        cbOut->setMinimumWidth(260);
+        btnTest->setToolTip(QString::fromUtf8("เล่นโน้ตทดสอบสั้นๆ ผ่านเอาต์พุตที่เลือก (ใช้ได้เมื่อเพลงหยุดเล่นอยู่)"));
+
+        dg->addWidget(new QLabel(QStringLiteral("Audio device type:"), dev), 0, 0, Qt::AlignRight | Qt::AlignVCenter);
+        dg->addWidget(cbType, 0, 1, 1, 2);
+        dg->addWidget(new QLabel(QStringLiteral("Output:"), dev), 1, 0, Qt::AlignRight | Qt::AlignVCenter);
+        dg->addWidget(cbOut, 1, 1);
+        dg->addWidget(btnTest, 1, 2);
+        dg->addWidget(new QLabel(QStringLiteral("Active output channels:"), dev), 2, 0, Qt::AlignRight | Qt::AlignTop);
+        dg->addWidget(chFrame, 2, 1, 1, 2);
+        dg->addWidget(new QLabel(QStringLiteral("Sample rate:"), dev), 3, 0, Qt::AlignRight | Qt::AlignVCenter);
+        dg->addWidget(cbSr, 3, 1, 1, 2);
+        dg->addWidget(new QLabel(QStringLiteral("Audio buffer size:"), dev), 4, 0, Qt::AlignRight | Qt::AlignVCenter);
+        dg->addWidget(cbBuf, 4, 1, 1, 2);
+        dg->addWidget(note, 5, 0, 1, 3);
+        dg->setColumnStretch(1, 1);
+        dvl->insertWidget(dvl->indexOf(ui->groupBox_12), dev);
+
+        // the old single controls (output list, latency slider) are replaced by this panel
+        ui->label_7->setVisible(false);
+        ui->cbAudioOut->setVisible(false);
+        ui->label_23->setVisible(false);
+        ui->sliderBuffer->setVisible(false);
+        ui->spinBuffer->setVisible(false);
+
+        auto normalCount = []() { return qMax(0, MidiSynthesizer::audioDevices().count() - 1); };
+
+        // -------- fill every control from the real state of the synth / ASIO driver --------
+        auto refreshFn = std::make_shared<std::function<void()>>();
+        auto refresh = [refreshFn]() { (*refreshFn)(); };
+        *refreshFn = [=]() {
+            const bool isAsio = synth->asioDevice() >= 0;
+            const QStringList asioNames = AsioOutput::devices();
+            const QStringList winNames = MidiSynthesizer::audioDevices();
+            {
+                QSignalBlocker b1(cbType), b2(cbOut);
+                cbType->clear();
+                cbType->addItem(QStringLiteral("Windows Audio"), 0);
+                if (!asioNames.isEmpty())
+                    cbType->addItem(QStringLiteral("ASIO"), 1);
+                cbType->setCurrentIndex(isAsio && cbType->count() > 1 ? 1 : 0);
+                cbOut->clear();
+                if (isAsio) {
+                    for (const QString &n : asioNames) cbOut->addItem(n);
+                    cbOut->setCurrentIndex(qBound(0, synth->asioDevice(), qMax(0, cbOut->count() - 1)));
+                } else {
+                    for (int i = 1; i < winNames.count(); i++) cbOut->addItem(winNames[i]);
+                    cbOut->setCurrentIndex(qBound(0, synth->defaultDevice() - 1, qMax(0, cbOut->count() - 1)));
+                }
+            }
+
+            // active output channels (ASIO: every stereo pair of the driver; Windows: the device's own stereo out)
+            while (QLayoutItem *it = chLay->takeAt(0)) {
+                if (QWidget *w = it->widget()) w->deleteLater();
+                delete it;
+            }
+            const int outs = isAsio ? AsioOutput::outputCount() : 0;
+            if (outs >= 2) {
+                const unsigned mask = AsioOutput::pairMask();
+                for (int pr = 0; pr < outs / 2; pr++) {
+                    QCheckBox *c = new QCheckBox(QStringLiteral("Output channel %1 + %2").arg(2 * pr + 1).arg(2 * pr + 2), chFrame);
+                    c->setChecked(pr == 0 ? ((mask & 1u) || mask == 0) : ((mask >> pr) & 1u));
+                    chLay->addWidget(c);
+                    QObject::connect(c, &QCheckBox::toggled, dev, [=](bool) {
+                        unsigned m = 0;
+                        int n = 0;
+                        QList<QCheckBox *> boxes = chFrame->findChildren<QCheckBox *>();
+                        for (int i = 0; i < boxes.count(); i++)
+                            if (boxes[i]->isChecked()) { m |= (1u << i); n++; }
+                        if (n == 0) {                    // at least one pair must stay on
+                            QSignalBlocker bb(c);
+                            c->setChecked(true);
+                            return;
+                        }
+                        if (m == AsioOutput::pairMask())
+                            return;
+                        AsioOutput::setPairMask(m);
+                        settings->setValue("AsioPairMask", m);
+                        mainWin->stop();
+                        if (synth->isOpened()) { synth->close(); synth->open(); }
+                        if (synth->asioDevice() < 0)
+                            QMessageBox::warning(this, tr("ASIO"), tr("Could not start this ASIO driver. The normal output device is used instead.")
+                                                 + QStringLiteral("\n") + synth->asioError());
+                        settings->setValue("AsioDevice", synth->asioDevice());
+                        // rebuild the panel after this click has finished
+                        QTimer::singleShot(0, dev, [refresh]() { refresh(); });
+                    });
+                }
+                chFrame->setEnabled(true);
+            } else {
+                QCheckBox *c = new QCheckBox(QStringLiteral("Output channel 1 + 2"), chFrame);
+                c->setChecked(true);
+                c->setEnabled(false);
+                chLay->addWidget(c);
+                c->setToolTip(QString::fromUtf8("Windows Audio ใช้ช่องสเตอริโอของอุปกรณ์เอง — เลือกช่องได้เมื่อใช้ ASIO"));
+            }
+
+            // sample rate
+            {
+                QSignalBlocker b(cbSr);
+                cbSr->clear();
+                const int rates[] = { 44100, 48000, 88200, 96000 };
+                for (int r : rates) {
+                    if (isAsio && AsioOutput::outputCount() > 0 && r != synth->sampleRateHz() && !AsioOutput::rateSupported(r))
+                        continue;       // the driver says it cannot run at this rate
+                    cbSr->addItem(QString::number(r) + QStringLiteral(" Hz") + (r != 44100 ? QStringLiteral("   [PRO]") : QString()), r);
+                }
+                cbSr->setCurrentIndex(qMax(0, cbSr->findData(synth->sampleRateHz())));
+            }
+
+            // buffer size
+            {
+                QSignalBlocker b(cbBuf);
+                cbBuf->clear();
+                int rate = isAsio ? AsioOutput::currentRate() : synth->sampleRateHz();
+                if (rate < 8000) rate = synth->sampleRateHz() > 0 ? synth->sampleRateHz() : 44100;
+                auto label = [rate](int samples) {
+                    return QStringLiteral("%1 samples (%2 ms)").arg(samples).arg(samples * 1000.0 / rate, 0, 'f', 1);
+                };
+                int mn, mx, pref, gran;
+                if (isAsio && AsioOutput::bufferInfo(mn, mx, pref, gran)) {
+                    cbBuf->addItem(QStringLiteral("Driver default: ") + label(pref), 0);
+                    const int cand[] = { 32, 64, 96, 128, 192, 240, 256, 384, 480, 512, 768, 960, 1024, 1536, 2048, 4096 };
+                    for (int v : cand) {
+                        if (v < mn || v > mx || v == pref) continue;
+                        bool okSize = true;
+                        if (gran == -1) okSize = (v & (v - 1)) == 0;                  // powers of two only
+                        else if (gran > 0) okSize = ((v - mn) % gran) == 0;
+                        else okSize = false;                                          // fixed size driver
+                        if (okSize) cbBuf->addItem(label(v), v);
+                    }
+                    cbBuf->setCurrentIndex(qMax(0, cbBuf->findData(AsioOutput::bufferSize())));
+                    cbBuf->setEnabled(cbBuf->count() > 1);
+                } else {
+                    const int msList[] = { 10, 20, 30, 40, 50, 60, 80, 100, 150, 200, 300, 500 };
+                    const int cur = ui->sliderBuffer->value();
+                    bool found = false;
+                    for (int ms : msList) {
+                        cbBuf->addItem(label(ms * rate / 1000) + (ms < 50 ? QStringLiteral("   [PRO]") : QString()), ms);
+                        if (ms == cur) found = true;
+                    }
+                    if (!found) cbBuf->addItem(label(cur * rate / 1000), cur);
+                    cbBuf->setCurrentIndex(qMax(0, cbBuf->findData(cur)));
+                    cbBuf->setEnabled(true);
+                }
+            }
+
+            note->setText(isAsio
+                ? QString::fromUtf8("ASIO: เสียงหลักถูกส่งไปทุกคู่ช่องที่ติ๊กไว้  •  ถ้าไม่มีเสียง ตรวจว่าเปิดช่องเอาต์พุตของไดรเวอร์แล้ว (เช่น ASIO4ALL)")
+                : QString::fromUtf8("Windows Audio  •  ต้องการความหน่วงต่ำมาก ให้เลือกชนิดอุปกรณ์เป็น ASIO"));
+        };
+
+        // -------- switching output --------
+        auto applyOutput = [=](bool asio, int k) {
+            const int target = asio ? normalCount() + k : k;
+            if (target < 0 || target >= ui->cbAudioOut->count())
+                return;
+            QSignalBlocker bl(ui->cbAudioOut);
+            ui->cbAudioOut->setCurrentIndex(target);
+            on_cbAudioOut_activated(target);          // the proven path: stops playback, rebuilds the synth on the device
+            if (asio && synth->asioDevice() >= 0)
+                settings->setValue("AsioLastDevice", synth->asioDevice());
+        };
+
+        connect(cbType, QOverload<int>::of(&QComboBox::activated), this, [=](int i) {
+            const bool asio = cbType->itemData(i).toInt() == 1;
+            if (asio) {
+                int k = settings->value("AsioLastDevice", 0).toInt();
+                if (k < 0 || k >= AsioOutput::devices().count()) k = 0;
+                applyOutput(true, k);
+            } else {
+                applyOutput(false, qBound(0, synth->defaultDevice() - 1, qMax(0, normalCount() - 1)));
+            }
+            refresh();
+        });
+        connect(cbOut, QOverload<int>::of(&QComboBox::activated), this, [=](int k) {
+            applyOutput(synth->asioDevice() >= 0 || cbType->currentData().toInt() == 1, k);
+            refresh();
+        });
+
+        // -------- test note --------
+        connect(btnTest, &QPushButton::clicked, this, [=]() {
+            if (!synth->isOpened()) {
+                QMessageBox::information(this, QStringLiteral("Test"), QString::fromUtf8("ยังไม่ได้เปิดอุปกรณ์เสียง"));
+                return;
+            }
+            if (!mainWin->midiPlayer()->isPlayerStopped()) {
+                QMessageBox::information(this, QStringLiteral("Test"), QString::fromUtf8("เพลงกำลังเล่นอยู่ — ฟังเสียงจากเพลงได้เลย หรือหยุดเพลงก่อนกด Test"));
+                return;
+            }
+            synth->sendNoteOn(0, 72, 100);
+            QTimer::singleShot(700, [synth]() { synth->sendNoteOff(0, 72, 0); });
+        });
+
+        // -------- sample rate / buffer --------
+        connect(cbSr, QOverload<int>::of(&QComboBox::activated), this, [=](int i) {
+            const int hz = cbSr->itemData(i).toInt();
+            if (hz != 44100 && !ProLicense::ensureUnlocked(this)) {
+                refresh();
+                return;
+            }
+            if (!mainWin->midiPlayer()->isPlayerStopped())
+                mainWin->stop();
+            synth->setSampleRate(hz);
+            settings->setValue("SynthSampleRate", hz);
+            refresh();
+        });
+        connect(cbBuf, QOverload<int>::of(&QComboBox::activated), this, [=](int i) {
+            const int v = cbBuf->itemData(i).toInt();
+            if (synth->asioDevice() >= 0 && AsioOutput::outputCount() > 0) {
+                AsioOutput::setBufferSize(v);
+                settings->setValue("AsioBufferSamples", v);
+                mainWin->stop();
+                if (synth->isOpened()) { synth->close(); synth->open(); }
+                if (synth->asioDevice() < 0)
+                    QMessageBox::warning(this, tr("ASIO"), tr("Could not start this ASIO driver. The normal output device is used instead.")
+                                         + QStringLiteral("\n") + synth->asioError());
+                settings->setValue("AsioDevice", synth->asioDevice());
+            } else {
+                ui->sliderBuffer->setValue(v);          // the existing latency code (PRO check, re-open of the synth)
+            }
+            refresh();
+        });
+
+        refresh();
     }
 
     // Mixer edition: karaoke-player settings (playlist, lyrics, song database,

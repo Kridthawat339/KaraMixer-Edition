@@ -135,7 +135,7 @@ public:
         trimCap->setAlignment(Qt::AlignCenter);
         trimCaption = trimCap;
         trimCap->setStyleSheet("QLabel { color: #d23342; font-weight: bold; font-size: 7pt; background: transparent; }");
-        QPushButton *btnDn = new QPushButton(QStringLiteral("-"), trim);
+        QPushButton *btnDn = new QPushButton(QString(QChar(0x2212)), trim);
         QPushButton *btnUp = new QPushButton(QStringLiteral("+"), trim);
         QPushButton *btnUnity = new QPushButton(QStringLiteral("0 dB"), trim);
         unityBtn = btnUnity;
