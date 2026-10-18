@@ -11,6 +11,8 @@
 #include <string>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #ifdef _WIN32
   #ifndef NOMINMAX
@@ -36,6 +38,7 @@ struct Entry
     bool   isFloat = true;
     std::vector<char>  chunk;   // GetChunk buffer
     std::vector<float> tmp;     // 16-bit conversion
+    std::vector<float> tmp2;    // stereo pair of a multi-channel stream
     ~Entry() { delete plugin; }
 };
 
@@ -95,6 +98,27 @@ std::string toUtf8(const void *file, DWORD flags)
 #endif
 }
 
+std::string gLastError;
+
+void logFailure(const std::string &path, const std::string &why)
+{
+    gLastError = why;
+#ifdef _WIN32
+    const char *home = std::getenv("USERPROFILE");
+    if (!home) return;
+    std::string f = std::string(home) + "\\.KaraMixer\\vst3.log";
+    FILE *fp = std::fopen(f.c_str(), "ab");
+    if (!fp) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    std::fprintf(fp, "%04d-%02d-%02d %02d:%02d:%02d  %s  ->  %s\r\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond,
+                 path.c_str(), why.c_str());
+    std::fclose(fp);
+#else
+    (void)path;
+#endif
+}
+
 void copyStr(char *dst, size_t cap, const std::string &s)
 {
     size_t n = s.size() < cap - 1 ? s.size() : cap - 1;
@@ -130,9 +154,33 @@ DWORD CALLBACK instrumentProc(HSTREAM, void *buffer, DWORD length, void *user)
 void CALLBACK effectProc(HDSP, DWORD, void *buffer, DWORD length, void *user)
 {
     Entry *e = (Entry *)user;
-    if (!e || !e->plugin || e->chans < 1 || e->chans > 2)
+    if (!e || !e->plugin || e->chans < 1)
         return;
     const DWORD bytesPerSample = e->isFloat ? 4 : 2;
+    if (e->chans > 2) {
+        // multi-channel stream (the master mixer has 8): the effect works on the first stereo pair, the rest passes untouched
+        const int C = (int)e->chans;
+        const int frames = (int)(length / (C * bytesPerSample));
+        e->tmp.resize((size_t)frames * 2);
+        e->tmp2.resize((size_t)frames * 2);
+        if (e->isFloat) {
+            float *b = (float *)buffer;
+            for (int i = 0; i < frames; i++) { e->tmp[2 * i] = b[i * C]; e->tmp[2 * i + 1] = b[i * C + 1]; }
+            e->plugin->process(e->tmp.data(), e->tmp2.data(), frames, 2);
+            for (int i = 0; i < frames; i++) { b[i * C] = e->tmp2[2 * i]; b[i * C + 1] = e->tmp2[2 * i + 1]; }
+        } else {
+            short *b = (short *)buffer;
+            for (int i = 0; i < frames; i++) { e->tmp[2 * i] = b[i * C] / 32768.0f; e->tmp[2 * i + 1] = b[i * C + 1] / 32768.0f; }
+            e->plugin->process(e->tmp.data(), e->tmp2.data(), frames, 2);
+            for (int i = 0; i < frames; i++) {
+                for (int k = 0; k < 2; k++) {
+                    float v = e->tmp2[2 * i + k] * 32767.0f;
+                    b[i * C + k] = (short)(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : v));
+                }
+            }
+        }
+        return;
+    }
     int frames = (int)(length / (e->chans * bytesPerSample));
     if (e->isFloat) {
         e->plugin->process((float *)buffer, (float *)buffer, frames, (int)e->chans);
@@ -154,6 +202,7 @@ void CALLBACK effectProc(HDSP, DWORD, void *buffer, DWORD length, void *user)
 } // namespace
 
 bool isVst3Handle(DWORD h) { return find(h) != nullptr; }
+std::string lastError() { return gLastError; }
 
 // ---------------------------------------------------------------------------
 
@@ -168,11 +217,15 @@ DWORD ChannelSetDSP(DWORD chHandle, const void *dllFile, DWORD flags, int priori
         return 0;
 
     std::string err;
+    gLastError.clear();
     vst3host::Plugin *p = vst3host::Plugin::load(path, false, ci.freq ? ci.freq : 44100, &err);
-    if (!p)
+    if (!p) {
+        logFailure(path, err.empty() ? std::string("plug-in could not be loaded") : err);
         return 0;
+    }
     if (p->isInstrument() || p->info().chansIn == 0) {      // not an effect
         delete p;
+        logFailure(path, "this VST3 is an instrument (no audio input), not an effect");
         return 0;
     }
 

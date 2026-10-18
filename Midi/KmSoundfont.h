@@ -5,7 +5,12 @@
 // so other programs (Polyphone, Viena, ...) cannot open or edit it. KaraMixer decrypts it on the fly while
 // BASSMIDI reads it (BASS_MIDI_FontInitUser), nothing is ever written back to disk in clear.
 //
-// File layout: "KMSF1\0\0\0" (8) | nonce (12) | original size, little endian (8) | reserved (4) | ciphertext
+// MACHINE BOUND: the key is derived from the Hardware ID (the same 8-digit ID the PRO licence uses) that was typed in
+// when the file was locked. On any other computer the key is different, the file is refused and has to be locked
+// again for that computer's ID.
+//
+// File layout: "KMSF2\0\0\0" (8) | nonce (12) | original size, little endian (8) | key tag (4) | ciphertext
+//   (the old "KMSF1" files were not bound to a machine: they are no longer accepted and must be locked again)
 //
 // Header-only. Include after <bass.h> / <bassmidi.h>.
 
@@ -14,6 +19,10 @@
 #include <QString>
 #include <QByteArray>
 #include <QRandomGenerator>
+#include <QStringList>
+#include <QCryptographicHash>
+#include <QMessageAuthenticationCode>
+#include "Widgets/ProLicense.h"
 #include <memory>
 #include <cstdint>
 #include <cstring>
@@ -24,7 +33,29 @@
 namespace KmSf {
 
 static const int kHeader = 32;
-static const char kMagic[8] = { 'K', 'M', 'S', 'F', '1', 0, 0, 0 };
+static const char kMagic[8] = { 'K', 'M', 'S', 'F', '2', 0, 0, 0 };      // machine-bound format
+static const char kMagicOld[8] = { 'K', 'M', 'S', 'F', '1', 0, 0, 0 };   // old, not machine-bound (refused)
+
+// why the last openFont() refused a file, and which files were refused because they belong to another machine
+inline QString &lastError() { static QString e; return e; }
+inline QStringList &foreignFiles() { static QStringList l; return l; }
+
+// 8 hex digits, upper case; empty if the text is not a valid ID (spaces / dashes are ignored)
+inline QString normalizeId(const QString &text)
+{
+    QString r;
+    for (const QChar &c : text) {
+        if (c == QLatin1Char(' ') || c == QLatin1Char('-'))
+            continue;
+        const QChar u = c.toUpper();
+        if (!((u >= QLatin1Char('0') && u <= QLatin1Char('9')) || (u >= QLatin1Char('A') && u <= QLatin1Char('F'))))
+            return QString();
+        r += u;
+    }
+    return r.size() == 8 ? r : QString();
+}
+
+inline QString thisMachineId() { return ProLicense::hardwareId(); }
 
 inline bool isProtectedFile(const QString &path)
 {
@@ -73,6 +104,25 @@ inline void masterKey(uint8_t key[32])
     }
 }
 
+// the key of one machine: HMAC(master key, "KMSF2|" + Hardware ID)
+inline void keyForMachine(const QString &hwid, uint8_t key[32])
+{
+    uint8_t mk[32];
+    masterKey(mk);
+    const QByteArray h = QMessageAuthenticationCode::hash(QByteArray("KMSF2|") + hwid.toUpper().toLatin1(),
+                                                          QByteArray(reinterpret_cast<const char *>(mk), 32),
+                                                          QCryptographicHash::Sha256);
+    std::memcpy(key, h.constData(), 32);
+}
+
+// 4 bytes that tell whether a file was locked for the machine this key belongs to (reveal nothing about the key)
+inline void keyTag(const uint8_t key[32], uint8_t tag[4])
+{
+    const QByteArray h = QCryptographicHash::hash(QByteArray(reinterpret_cast<const char *>(key), 32) + QByteArray("|tag"),
+                                                  QCryptographicHash::Sha256);
+    std::memcpy(tag, h.constData(), 4);
+}
+
 // XOR `len` bytes at plaintext offset `pos` (random access: the counter is derived from the offset)
 inline void crypt(const uint8_t key[32], const uint8_t nonce[12], uint64_t pos, uint8_t *data, size_t len)
 {
@@ -91,9 +141,14 @@ inline void crypt(const uint8_t key[32], const uint8_t nonce[12], uint64_t pos, 
     }
 }
 
-// .sf2 -> .kmsf
-inline bool protectFile(const QString &src, const QString &dst, QString *error = nullptr)
+// .sf2 -> .kmsf, locked for the machine with this Hardware ID
+inline bool protectFile(const QString &src, const QString &dst, const QString &hwid, QString *error = nullptr)
 {
+    const QString id = normalizeId(hwid);
+    if (id.isEmpty()) {
+        if (error) *error = QStringLiteral("invalid machine ID");
+        return false;
+    }
     QFile in(src);
     if (!in.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("cannot read the source file");
@@ -112,8 +167,9 @@ inline bool protectFile(const QString &src, const QString &dst, QString *error =
         return false;
     }
 
-    uint8_t key[32], nonce[12];
-    masterKey(key);
+    uint8_t key[32], nonce[12], tag[4];
+    keyForMachine(id, key);
+    keyTag(key, tag);
     for (int i = 0; i < 12; i++)
         nonce[i] = uint8_t(QRandomGenerator::global()->generate() & 0xff);
 
@@ -123,6 +179,7 @@ inline bool protectFile(const QString &src, const QString &dst, QString *error =
     std::memcpy(head + 8, nonce, 12);
     for (int b = 0; b < 8; b++)
         head[20 + b] = uint8_t(size >> (8 * b));
+    std::memcpy(head + 28, tag, 4);
     out.write(reinterpret_cast<const char *>(head), kHeader);
 
     QByteArray buf(1 << 20, 0);
@@ -199,9 +256,19 @@ inline HSOUNDFONT openFont(const QString &path, DWORD flags)
 
     Reader *r = new Reader;
     r->file.setFileName(path);
+    lastError().clear();
     uint8_t head[kHeader];
-    if (!r->file.open(QIODevice::ReadOnly) || r->file.read(reinterpret_cast<char *>(head), kHeader) != kHeader
-        || std::memcmp(head, kMagic, 8) != 0) {
+    if (!r->file.open(QIODevice::ReadOnly) || r->file.read(reinterpret_cast<char *>(head), kHeader) != kHeader) {
+        delete r;
+        return 0;
+    }
+    if (std::memcmp(head, kMagicOld, 8) == 0) {
+        lastError() = QStringLiteral("old locked soundfont (not bound to a computer): lock the .sf2 again with this computer's ID");
+        foreignFiles() << path;
+        delete r;
+        return 0;
+    }
+    if (std::memcmp(head, kMagic, 8) != 0) {
         delete r;
         return 0;
     }
@@ -212,7 +279,18 @@ inline HSOUNDFONT openFont(const QString &path, DWORD flags)
         delete r;
         return 0;
     }
-    masterKey(r->key);
+    keyForMachine(thisMachineId(), r->key);
+    {
+        uint8_t tag[4];
+        keyTag(r->key, tag);
+        if (std::memcmp(tag, head + 28, 4) != 0) {      // locked for another computer
+            lastError() = QStringLiteral("this soundfont is locked for another computer: lock the .sf2 again with this computer's ID (%1)")
+                              .arg(thisMachineId());
+            foreignFiles() << path;
+            delete r;
+            return 0;
+        }
+    }
 
     std::shared_ptr<bool> closed = r->closed;
     HSOUNDFONT f = BASS_MIDI_FontInitUser(&procs, r, flags);

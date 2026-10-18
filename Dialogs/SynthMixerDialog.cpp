@@ -598,8 +598,22 @@ void SynthMixerDialog::setVSTVendorMenu()
 
 #endif
 
+void SynthMixerDialog::warnVstNotLoaded(const QString &name)
+{
+#ifdef __linux__
+    Q_UNUSED(name)
+#else
+    std::string why = bv::lastError();
+    QMessageBox::warning(this, QString::fromUtf8("VST"),
+        QString::fromUtf8("ไม่สามารถโหลด \"%1\" เป็นเอฟเฟกต์ได้").arg(name)
+        + (why.empty() ? QString() : QString("\n\n") + QString::fromUtf8(why.c_str()))
+        + QString::fromUtf8("\n\nสาเหตุที่พบบ่อย: เป็น VST instrument (ไม่ใช่เอฟเฟกต์), บิตไม่ตรงกับโปรแกรม (โปรแกรม 32 บิตใช้ได้เฉพาะ 32 บิต, 64 บิตใช้ได้เฉพาะ 64 บิต), หรือปลั๊กอินติดระบบลิขสิทธิ์\nรายละเอียด: โฟลเดอร์ .KaraMixer ไฟล์ vst3.log"));
+#endif
+}
+
 void SynthMixerDialog::setFXToSynth()
 {
+    struct RestoreGuard { bool &f; RestoreGuard(bool &x) : f(x) { f = true; } ~RestoreGuard() { f = false; } } restoreGuard(restoringFx);
     QSettings st(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
     st.beginReadArray("SynthMixer");
     for (InstrumentType t : chInstMap.keys())
@@ -689,6 +703,7 @@ void SynthMixerDialog::setFXToSynth()
 // speaker is different), so there is no gap in the sound.
 void SynthMixerDialog::reloadFromSettings()
 {
+    struct RestoreGuard { bool &f; RestoreGuard(bool &x) : f(x) { f = true; } ~RestoreGuard() { f = false; } } restoreGuard(restoringFx);
     skipSave = true;      // the auto-save timer must not write the old state over the new files meanwhile
 
     QSettings st(Config::CONFIG_SYNTH_FILE_PATH, QSettings::IniFormat);
@@ -1973,6 +1988,17 @@ FX* SynthMixerDialog::addFX(const QString &uidStr, bool bypass)
     if (fx == nullptr)
         return fx;
 
+    // a VST that could not be loaded as an effect (instrument, wrong bit-depth, VST3 refused ...): say so instead of
+    // leaving a dead entry in the strip (not while saved effects are being restored: they stay as they were)
+    #ifndef __linux__
+    if (!restoringFx && fx->fxType() == FXType::VSTEffects && fx->fxHandle() == 0)
+    {
+        synth->removeFX(currentType, synth->instrument(currentType).FXs.count() - 1);
+        warnVstNotLoaded(vst.vstName);
+        return nullptr;
+    }
+    #endif
+
     int i = inst.FXs.count();
     synth->setFXBypass(currentType, i, bypass);
 
@@ -2149,6 +2175,15 @@ FX* SynthMixerDialog::addMasterFX(uint uid, bool bypass)
     FX *fx = synth->addMasterFX(uid);
     if (fx == nullptr)
         return nullptr;
+
+    #ifndef __linux__
+    if (!restoringFx && fx->fxType() == FXType::VSTEffects && fx->fxHandle() == 0)
+    {
+        synth->removeMasterFX(synth->masterFXList().count() - 1);
+        warnVstNotLoaded(synth->VSTList()[uid].vstName);
+        return nullptr;
+    }
+    #endif
 
     const int i = synth->masterFXList().count() - 1;
     synth->setMasterFXBypass(i, bypass);

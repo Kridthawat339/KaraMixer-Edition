@@ -7,6 +7,7 @@
 
 #include <bass.h>
 #include <bass_vst.h>
+#include <string>
 
 namespace bv {
 
@@ -35,6 +36,9 @@ BOOL  ProcessEventRaw(DWORD vstHandle, const void *event, DWORD length);
 
 // true when the handle belongs to a VST3 plug-in
 bool  isVst3Handle(DWORD vstHandle);
+
+// why the last VST3 load failed (empty when it did not); every failure is also written to ~/.KaraMixer/vst3.log
+std::string lastError();
 
 } // namespace bv
 

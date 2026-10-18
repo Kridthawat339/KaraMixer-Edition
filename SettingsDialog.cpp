@@ -12,6 +12,7 @@
 #include "Midi/MidiHelper.h"
 #include "Midi/AsioOutput.h"
 #include "Widgets/ProLicense.h"
+#include "Midi/KmSoundfont.h"
 #include <QGroupBox>
 #include <QComboBox>
 #include <QCheckBox>
@@ -1347,6 +1348,11 @@ void SettingsDialog::on_btnSfAdd_clicked()
         {
             QString title = tr("ไฟล์ซาวด์ฟ้อนท์ไม่ถูกต้อง");
             QString msg = tr("ไม่สามารถอ่านไฟล์ ") + sf + tr(" ได้\nโปรดลองเลือกไฟล์อื่น");
+            if (KmSf::isProtectedFile(sf) && !KmSf::lastError().isEmpty()) {
+                title = tr("ซาวด์ฟอนต์ที่ล็อกไว้ใช้กับเครื่องนี้ไม่ได้");
+                msg = sf + QString::fromUtf8("\n\nไฟล์นี้ถูกล็อกสำหรับเครื่องอื่น (หรือเป็นไฟล์ล็อกรุ่นเก่า) "
+                                             "ต้องล็อกใหม่ด้วย Hardware ID ของเครื่องนี้: ") + KmSf::thisMachineId();
+            }
             QMessageBox::warning(this, title, msg, QMessageBox::Ok);
         }
     }

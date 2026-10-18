@@ -117,6 +117,8 @@ private:
     QButtonGroup btnPresets;
 
     int currentFxIndexToRemove;
+    void warnVstNotLoaded(const QString &name);
+    bool restoringFx = false;   // true while saved effects are loaded (no warning boxes then)
     bool addToMaster = false;   // FX menus add to the master strip instead of currentType
 
     bool staysOnTop = false;

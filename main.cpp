@@ -10,6 +10,9 @@
 #include <QPalette>
 #include <QColor>
 #include <QThread>
+#include <QMessageBox>
+#include <QFileInfo>
+#include "Midi/KmSoundfont.h"
 #include <QFontDatabase>
 
 #include "BASSFX/VSTFX.h"
@@ -122,6 +125,19 @@ int main(int argc, char *argv[])
 
     delete splash;
     delete pixmap;
+
+    // locked soundfonts made for another computer (or in the old format) were skipped: tell the user what to do
+    if (!KmSf::foreignFiles().isEmpty()) {
+        QStringList names;
+        for (const QString &f : KmSf::foreignFiles())
+            names << QFileInfo(f).fileName();
+        QMessageBox box(QMessageBox::NoIcon, QString::fromUtf8("Soundfont ที่ล็อกไว้"),
+                        QString::fromUtf8("ซาวด์ฟอนต์ต่อไปนี้ถูกล็อกสำหรับเครื่องอื่น (หรือเป็นไฟล์ล็อกรุ่นเก่า) จึงใช้กับเครื่องนี้ไม่ได้:\n\n")
+                            + names.join("\n")
+                            + QString::fromUtf8("\n\nต้องล็อกใหม่ด้วย Hardware ID ของเครื่องนี้: ") + KmSf::thisMachineId(),
+                        QMessageBox::Ok, mixer);
+        box.exec();
+    }
 
     return a.exec();
 }
