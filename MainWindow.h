@@ -30,11 +30,11 @@
 
 class MedleyLoader;
 class RemoteServer;
+class MixerAutoHide;
 
 
 namespace Ui {
 class MainWindow;
-class MixerAutoHide;
 }
 
 class MainWindow : public QMainWindow
