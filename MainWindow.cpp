@@ -301,7 +301,7 @@ MainWindow::MainWindow(QWidget *parent) :
             settings->setValue("AsioDevice", -1);
         }
         AsioOutput::setPairMask(settings->value("AsioPairMask", 1).toUInt());
-        AsioOutput::setSpeakerSplit(settings->value("AsioSpeakerSplit", false).toBool());
+        AsioOutput::setSpeakerSplit(ProLicense::isUnlocked() && settings->value("AsioSpeakerSplit", false).toBool());   // PRO function
         AsioOutput::setBufferSize(settings->value("AsioBufferSamples", 0).toInt());
         synth->setAsioDevice(asio);
 

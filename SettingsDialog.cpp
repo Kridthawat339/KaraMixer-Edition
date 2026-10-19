@@ -489,7 +489,7 @@ void SettingsDialog::initDeviceTab()
         chLay->setSpacing(2);
         QComboBox *cbSr = new QComboBox(dev);
         QComboBox *cbBuf = new QComboBox(dev);
-        QCheckBox *cbSplit = new QCheckBox(QString::fromUtf8("แยกลำโพงตามแทรก (ASIO): หน้า → 1+2, หลัง → 3+4, กลาง/ซับ → 5+6, ข้าง → 7+8"), dev);
+        QCheckBox *cbSplit = new QCheckBox(QString::fromUtf8("[PRO] แยกลำโพงตามแทรก (ASIO): หน้า → 1+2, หลัง → 3+4, กลาง/ซับ → 5+6, ข้าง → 7+8"), dev);
         cbSplit->setToolTip(QString::fromUtf8("ส่งตำแหน่งลำโพงที่ตั้งไว้ในแต่ละแทรก (เมนูแยกลำโพง) ออกเป็นคู่เอาต์พุตของการ์ดเสียง ต้องมีเอาต์พุตอย่างน้อย 4 ช่อง\n"
                                                 "เมื่อเปิดใช้ ตัวเลือก Active output channels ด้านบนจะไม่ถูกใช้"));
         QLabel *note = new QLabel(dev);
@@ -711,6 +711,10 @@ void SettingsDialog::initDeviceTab()
         connect(cbSplit, &QCheckBox::clicked, this, [=](bool on) {
             if (on == AsioOutput::speakerSplit())
                 return;
+            if (on && !ProLicense::ensureUnlocked(this)) {      // speaker split is a PRO function
+                QTimer::singleShot(0, dev, [refresh]() { refresh(); });
+                return;
+            }
             AsioOutput::setSpeakerSplit(on);
             settings->setValue("AsioSpeakerSplit", on);
             mainWin->stop();
