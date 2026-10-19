@@ -131,7 +131,12 @@ bool AsioOutput::start(unsigned long source, int device)
     }
 
     if (!BASS_ASIO_Init(device, BASS_ASIO_THREAD)) {
-        asioLog("FAIL"); g_error = QString("ASIO init failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
+        const int ec = BASS_ASIO_ErrorGetCode();
+        asioLog(QString("FAIL: init error %1 (driver index %2)").arg(ec).arg(device));
+        g_error = QString("ASIO init failed (error %1)").arg(ec);
+        if (ec == 3)    // BASS_ASIO_ERROR_DRIVER
+            g_error += QString::fromUtf8("\nไดรเวอร์ ASIO เปิดไม่ได้: อาจถูกโปรแกรมอื่นใช้อยู่ (ปิดโปรแกรมเสียงอื่น / ปิด ASIO4ALL ที่ค้างอยู่), "
+                                         "อุปกรณ์เสียงของไดรเวอร์นี้ไม่ได้เสียบอยู่ หรือไดรเวอร์ติดตั้งไม่สมบูรณ์");
         return false;
     }
 
