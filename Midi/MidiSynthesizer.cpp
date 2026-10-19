@@ -254,23 +254,8 @@ bool MidiSynthesizer::open()
         if (!asioMain)
         {
             DWORD device = (i == 0) ? defaultDev : outDevices.keys()[i];
-            // right after leaving ASIO the driver (ASIO4ALL especially) may still hold the sound card for a moment:
-            // give it time to let go and retry until the mixer really plays, otherwise Windows Audio stays silent
-            const bool afterAsio = AsioOutput::recentlyStopped(8000);
-            if (afterAsio)
-                AsioOutput::waitSettle(800);
             BASS_ChannelSetDevice(mixer.handle, device);
-            bool playing = BASS_ChannelPlay(mixer.handle, false) != FALSE;
-            int tries = 0;
-            while (afterAsio && !playing && tries < 12) {
-                QThread::msleep(250);
-                tries++;
-                BASS_ChannelSetDevice(mixer.handle, device);
-                playing = BASS_ChannelPlay(mixer.handle, false) != FALSE;
-            }
-            if (afterAsio)
-                AsioOutput::logLine(QString("back to Windows Audio: mixer %1 device=%2 playing=%3 retries=%4 bassErr=%5")
-                                    .arg(i).arg(device).arg(playing).arg(tries).arg(BASS_ErrorGetCode()));
+            BASS_ChannelPlay(mixer.handle, false);
         }
 
         mixers[i] = mixer;
@@ -1642,8 +1627,8 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     {
         rv = new Reverb2FX(0, -100);   // lowest priority: after the channel's own FX
         rv->setDryMix(1.0f);
-        rv->setRoomSize(reverbStrong ? 0.8f : 0.75f);
-        rv->setDamp(reverbStrong ? 0.35f : 0.45f);
+        rv->setRoomSize(0.8f);
+        rv->setDamp(0.35f);
         rv->setWidth(1.0f);
         sendRv[t] = rv;
         if (openned)
@@ -1653,27 +1638,10 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     // The knob has to be clearly audible over its whole travel: the free-verb wet level goes up to 3.0
     // (it was capped at 1.6, so even a full knob was faint), and the room grows with the knob.
     const float k = level / 100.0f;
-    if (reverbStrong) {
-        rv->setWetMix(3.0f * std::pow(k, 0.85f));
-        rv->setRoomSize(0.7f + 0.25f * k);
-        rv->setDamp(0.35f);
-    } else {                    // 1.4.6 Final: tight and short
-        rv->setWetMix(1.6f * k);
-        rv->setRoomSize(0.75f);
-        rv->setDamp(0.45f);
-    }
+    rv->setWetMix(3.0f * std::pow(k, 0.85f));
+    rv->setRoomSize(0.7f + 0.25f * k);
     rv->setDryMix(1.0f);
     rv->on();
-}
-
-void MidiSynthesizer::setReverbStrong(bool strong)
-{
-    if (strong == reverbStrong)
-        return;
-    reverbStrong = strong;
-    const QList<InstrumentType> keys = sendRv.keys();
-    for (InstrumentType t : keys)
-        setReverb(t, instMap[t].reverb);        // re-apply every strip with the new strength
 }
 
 int MidiSynthesizer::reverb(InstrumentType t)
