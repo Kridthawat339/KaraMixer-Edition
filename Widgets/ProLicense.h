@@ -358,10 +358,10 @@ public:
         edit = new QLineEdit(this);
         edit->setPlaceholderText(QString::fromUtf8("วาง License ที่ได้รับ (KM3-...)"));
         edit->setMaxLength(200);
-        QFont small = mono;
-        small.setPointSize(9);
-        small.setBold(false);
-        edit->setFont(small);
+        QFont editFont = mono;
+        editFont.setPointSize(9);
+        editFont.setBold(false);
+        edit->setFont(editFont);
         edit->setMinimumHeight(34);
         v->addWidget(edit);
 
