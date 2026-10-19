@@ -21,6 +21,7 @@
 #include <QGridLayout>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QSlider>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <functional>
@@ -511,9 +512,7 @@ void SettingsDialog::initDeviceTab()
         // the old single controls (output list, latency slider) are replaced by this panel
         ui->label_7->setVisible(false);
         ui->cbAudioOut->setVisible(false);
-        ui->label_23->setVisible(false);
-        ui->sliderBuffer->setVisible(false);
-        ui->spinBuffer->setVisible(false);
+        // (the latency slider stays: drag it for any value, the Buffer size list above follows it)
 
         auto normalCount = []() { return qMax(0, MidiSynthesizer::audioDevices().count() - 1); };
 
@@ -713,6 +712,10 @@ void SettingsDialog::initDeviceTab()
             }
             refresh();
         });
+        // the latency slider (kept) moves the Buffer size list along
+        connect(ui->sliderBuffer, &QSlider::valueChanged, this, [refresh](int) {
+            QTimer::singleShot(0, [refresh]() { refresh(); });
+        });
 
         refresh();
     }
@@ -736,7 +739,24 @@ void SettingsDialog::initDeviceTab()
         note->setWordWrap(true);
         g->addWidget(chOn, 0, 0, 1, 2);
         g->addWidget(new QLabel(QString::fromUtf8("หน่วงเวลาก่อนมิกเซอร์กลับมา :"), ah), 1, 0, Qt::AlignRight | Qt::AlignVCenter);
-        g->addWidget(spDelay, 1, 1, Qt::AlignLeft);
+        {   // the theme hides the spin box arrows: explicit - / + buttons next to the value
+            QWidget *dw = new QWidget(ah);
+            QHBoxLayout *dh = new QHBoxLayout(dw);
+            dh->setContentsMargins(0, 0, 0, 0);
+            QPushButton *bm = new QPushButton(QString(QChar(0x2212)), dw);
+            QPushButton *bp = new QPushButton(QStringLiteral("+"), dw);
+            bm->setFixedSize(32, 26);
+            bp->setFixedSize(32, 26);
+            spDelay->setButtonSymbols(QAbstractSpinBox::NoButtons);
+            spDelay->setMinimumWidth(110);
+            dh->addWidget(bm);
+            dh->addWidget(spDelay);
+            dh->addWidget(bp);
+            dh->addStretch(1);
+            connect(bm, &QPushButton::clicked, this, [spDelay]() { spDelay->setValue(spDelay->value() - 0.5); });
+            connect(bp, &QPushButton::clicked, this, [spDelay]() { spDelay->setValue(spDelay->value() + 0.5); });
+            g->addWidget(dw, 1, 1, Qt::AlignLeft);
+        }
         g->addWidget(new QLabel(QString::fromUtf8("โปรแกรมคาราโอเกะ :"), ah), 2, 0, Qt::AlignRight | Qt::AlignVCenter);
         g->addWidget(edProg, 2, 1);
         g->addWidget(note, 3, 0, 1, 2);
