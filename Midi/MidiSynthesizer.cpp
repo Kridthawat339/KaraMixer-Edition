@@ -238,6 +238,25 @@ bool MidiSynthesizer::open()
     // ASIO is fed in float anyway: a float decoding mixer needs no restart when the limiter / auto level is switched on
     DWORD f = (useFloat || asioDev >= 0) ? BASS_SAMPLE_FLOAT : 0;
 
+    // Coming back from ASIO: the driver (ASIO4ALL especially) takes the sound card exclusively, which leaves BASS's
+    // normal output devices dead ("BASS_Start has not been called", silent until the program restarts).
+    // Re-initialise them before any mixer is attached to them.
+    if (asioDev < 0 && AsioOutput::recentlyStopped(8000))
+    {
+        AsioOutput::waitSettle(1000);
+        const DWORD keepDev = BASS_GetDevice();
+        for (int d : outDevices.keys())
+        {
+            if (d <= 0) continue;
+            if (BASS_SetDevice((DWORD)d)) {
+                BASS_Free();
+                BASS_Init((DWORD)d, 44100, BASS_DEVICE_SPEAKERS, NULL, NULL);
+            }
+        }
+        if (keepDev != (DWORD)-1) BASS_SetDevice(keepDev);
+        AsioOutput::logLine(QStringLiteral("back to Windows Audio: output devices re-initialised"));
+    }
+
     // create mixer, bus
     for (int i=0; i<mixers.count(); i++)
     {
