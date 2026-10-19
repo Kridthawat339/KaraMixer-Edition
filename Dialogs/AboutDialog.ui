@@ -77,7 +77,7 @@
    <item>
     <widget class="QLabel" name="lbVersion">
      <property name="text">
-      <string>v.2.0.0 Pro</string>
+      <string>v.3.0.0 Pro</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>

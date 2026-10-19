@@ -35,3 +35,7 @@
 KaraMixer.pro.user
 KaraMixer.pro.user.*
 Widgets/km_secret.h
+
+# KaraMixer licence PRIVATE key: never commit
+km_private.key
+license-tools/km_private.key

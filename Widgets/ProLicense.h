@@ -1,6 +1,13 @@
 #ifndef PROLICENSE_H
 #define PROLICENSE_H
 
+// KaraMixer PRO licence (V3): an Ed25519 SIGNATURE made by the owner (license-tools/kmlicense.py) over
+//   "KMPRO3|USB|<USB ID>"  (flash drive licence)  or  "KMPRO3|HW|<Hardware ID>"  (machine licence).
+// The program contains only the PUBLIC key (Widgets/km_pubkey.h), so nobody can make a licence from the program.
+// The licence text is "KM3-..." (about 110 characters, pasted in the PRO dialog). Older short licences
+// (XXXX-XXXX-XXXX-XXXX, HMAC with a secret inside the program) are still accepted while kAllowOldLicense is true.
+//
+// Older text, kept for reference:
 // KaraMixer PRO licence, tied to a USB flash drive (the "dongle"); older licences tied to the machine still work.
 //   USB ID      : 8 hex digits made from the hardware serial number of the flash drive (see UsbDongle.h).
 //   USB licence : HMAC-SHA256(secret, "KMPRO|USB|" + USB ID), shown as XXXX-XXXX-XXXX-XXXX. It unlocks PRO only
@@ -36,6 +43,15 @@
 
 #include "Config.h"
 #include "UsbDongle.h"
+#include "Ed25519.h"
+#include <QElapsedTimer>
+
+// public key of the licence (made once by "kmlicense.py --genkey"); without it no V3 licence can be accepted
+#if defined(__has_include)
+#  if __has_include("km_pubkey.h")
+#    include "km_pubkey.h"
+#  endif
+#endif
 
 // generated at build time (never committed): KM_SECRET_LEN, kmSecretEnc[], kmSecretKey[]
 #if defined(__has_include)
@@ -47,8 +63,64 @@
 
 namespace ProLicense {
 
-// licences made for a machine's Hardware ID (the old scheme) keep working; set to false for USB-only
+// the older short licences (HMAC) keep working so existing customers are not locked out; set both to false when
+// every customer has a V3 licence (then a secret inside the program is no longer used at all)
 constexpr bool kAllowMachineLicense = true;
+constexpr bool kAllowOldLicense = true;
+
+// ---------------- V3: Ed25519 signed licences ----------------
+inline bool havePublicKey()
+{
+#ifdef KM_HAVE_PUBKEY
+    for (unsigned i = 0; i < sizeof(kmPublicKey); i++)
+        if (kmPublicKey[i] != 0)
+            return true;
+#endif
+    return false;
+}
+
+// "KM3-XXXXXX-..." -> 64 signature bytes (empty on any error)
+inline QByteArray decodeV3(const QString &text)
+{
+    QString t;
+    for (const QChar &c : text)
+        if (c.isLetterOrNumber())
+            t += c.toUpper();
+    if (!t.startsWith(QLatin1String("KM3")) || t.size() != 3 + 103)
+        return QByteArray();
+    QByteArray out;
+    quint32 acc = 0;
+    int bits = 0;
+    for (int i = 3; i < t.size(); i++) {
+        const ushort u = t.at(i).unicode();
+        int v;
+        if (u >= 'A' && u <= 'Z') v = u - 'A';
+        else if (u >= '2' && u <= '7') v = u - '2' + 26;
+        else return QByteArray();
+        acc = (acc << 5) | quint32(v);
+        bits += 5;
+        if (bits >= 8) {
+            bits -= 8;
+            out.append(char((acc >> bits) & 0xFF));
+            acc &= (1u << bits) - 1;
+        }
+    }
+    return out.size() == 64 ? out : QByteArray();
+}
+
+inline bool verifyV3(const QByteArray &sig, const QString &kind, const QString &id)
+{
+#ifdef KM_HAVE_PUBKEY
+    if (sig.size() != 64 || id.isEmpty() || !havePublicKey())
+        return false;
+    const QByteArray msg = QByteArray("KMPRO3|") + kind.toLatin1() + "|" + id.toUpper().toLatin1();
+    return Ed25519::verify(reinterpret_cast<const unsigned char *>(sig.constData()),
+                           reinterpret_cast<const unsigned char *>(msg.constData()), size_t(msg.size()), kmPublicKey);
+#else
+    Q_UNUSED(sig) Q_UNUSED(kind) Q_UNUSED(id)
+    return false;
+#endif
+}
 
 // the secret, unscrambled only for the moment it is needed (never stored in clear in the program)
 inline QByteArray secretBytes()
@@ -96,6 +168,36 @@ inline QString licenseFor(const QString &hwid)
                                                             QCryptographicHash::Sha256);
     const QString hex = QString::fromLatin1(mac.left(8).toHex().toUpper());
     return hex.mid(0, 4) + QLatin1Char('-') + hex.mid(4, 4) + QLatin1Char('-') + hex.mid(8, 4) + QLatin1Char('-') + hex.mid(12, 4);
+}
+
+// Which thing a V3 licence text unlocks right now: "USB:<id>" (a plugged-in flash drive), "HW:<id>" (this machine)
+// or empty. The check is a few milliseconds, so the answer is cached until the text or the plugged-in drives change.
+inline QString matchV3(const QString &text, bool force = false)
+{
+    static QString lastKey, lastRes;
+    static bool have = false;
+    const QStringList ids = UsbDongle::connectedIds(force);
+    const QString key = text + QLatin1Char('|') + ids.join(QLatin1Char(',')) + QLatin1Char('|') + hardwareId();
+    if (have && key == lastKey)
+        return lastRes;
+    QString res;
+    const QByteArray sig = decodeV3(text);
+    if (!sig.isEmpty()) {
+        for (const QString &id : ids)
+            if (verifyV3(sig, QStringLiteral("USB"), id)) { res = QStringLiteral("USB:") + id; break; }
+        if (res.isEmpty() && verifyV3(sig, QStringLiteral("HW"), hardwareId()))
+            res = QStringLiteral("HW:") + hardwareId();
+    }
+    lastKey = key;
+    lastRes = res;
+    have = true;
+    return res;
+}
+
+inline QString storedV3License()
+{
+    QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+    return st.value("ProLicenseV3").toString();
 }
 
 // licence for a USB drive (USB ID from UsbDongle)
@@ -149,12 +251,12 @@ inline QString usbIdForLicense(const QString &text, bool force = false)
 
 inline bool isValidUsbLicense(const QString &text, bool force = false)
 {
-    return !usbIdForLicense(text, force).isEmpty();
+    return kAllowOldLicense && !usbIdForLicense(text, force).isEmpty();
 }
 
 inline bool isValidLicense(const QString &text)
 {
-    if (!kAllowMachineLicense)
+    if (!kAllowMachineLicense || !kAllowOldLicense)
         return false;
     const QString want = normalize(licenseFor(hardwareId()));
     const QString got = normalize(text);
@@ -168,7 +270,8 @@ inline bool isValidLicense(const QString &text)
 
 inline bool isUnlocked()
 {
-    return isOwner() || isValidLicense(storedLicense()) || isValidUsbLicense(storedUsbLicense());
+    return isOwner() || !matchV3(storedV3License()).isEmpty() || isValidLicense(storedLicense())
+           || isValidUsbLicense(storedUsbLicense());
 }
 
 // "PRO  XXXX-XXXX-XXXX-XXXX" / "PRO (owner)" / empty when not unlocked
@@ -176,6 +279,11 @@ inline QString statusText()
 {
     if (isOwner())
         return QString::fromLatin1("PRO (owner)");
+    {
+        const QString m = matchV3(storedV3License());
+        if (!m.isEmpty())
+            return QString::fromLatin1("PRO  ") + (m.startsWith(QLatin1String("USB")) ? QString::fromLatin1("USB ") : QString::fromLatin1("PC ")) + m.mid(m.indexOf(QLatin1Char(':')) + 1);
+    }
     if (isValidLicense(storedLicense()))
         return QString::fromLatin1("PRO  ") + licenseFor(hardwareId());
     if (isValidUsbLicense(storedUsbLicense()))
@@ -185,12 +293,15 @@ inline QString statusText()
 
 inline bool activate(const QString &text)
 {
-    const bool machine = isValidLicense(text);
-    const QString usb = machine ? QString() : usbIdForLicense(text, true);
-    if (!machine && usb.isEmpty())
+    const bool v3 = !matchV3(text, true).isEmpty();
+    const bool machine = !v3 && isValidLicense(text);
+    const QString usb = (v3 || machine || !kAllowOldLicense) ? QString() : usbIdForLicense(text, true);
+    if (!v3 && !machine && usb.isEmpty())
         return false;
     QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-    if (machine)
+    if (v3)
+        st.setValue("ProLicenseV3", text.trimmed());
+    else if (machine)
         st.setValue("ProLicense", licenseFor(hardwareId()));
     else
         st.setValue("ProLicenseUsb", licenseForUsb(usb));
@@ -245,9 +356,12 @@ public:
         v->addLayout(hr);
 
         edit = new QLineEdit(this);
-        edit->setPlaceholderText(QString::fromLatin1("XXXX-XXXX-XXXX-XXXX"));
-        edit->setMaxLength(24);
-        edit->setFont(mono);
+        edit->setPlaceholderText(QString::fromUtf8("วาง License ที่ได้รับ (KM3-...)"));
+        edit->setMaxLength(200);
+        QFont small = mono;
+        small.setPointSize(9);
+        small.setBold(false);
+        edit->setFont(small);
         edit->setMinimumHeight(34);
         v->addWidget(edit);
 
