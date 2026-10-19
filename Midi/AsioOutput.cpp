@@ -98,6 +98,20 @@ QStringList AsioOutput::devices()
     return list;
 }
 
+namespace {
+    QString startMarker() { return QDir::homePath() + "/.KaraMixer/asio.starting"; }
+    void markStart() { QDir().mkpath(QDir::homePath() + "/.KaraMixer"); QFile f(startMarker()); if (f.open(QIODevice::WriteOnly)) f.write("1"); }
+    void clearStart() { QFile::remove(startMarker()); }
+    struct StartGuard { ~StartGuard() { clearStart(); } };     // removed on every normal return; stays only after a hang / crash
+}
+
+bool AsioOutput::crashedLastStart()
+{
+    const bool had = QFile::exists(startMarker());
+    if (had) { clearStart(); asioLog("previous ASIO start did not finish: ASIO switched off"); }
+    return had;
+}
+
 bool AsioOutput::start(unsigned long source, int device)
 {
     stop();
@@ -106,11 +120,14 @@ bool AsioOutput::start(unsigned long source, int device)
     if (device < 0 || source == 0)
         return false;
 
+    markStart();
+    StartGuard startGuard;
+
     // many ASIO drivers stay silent (or fail) when re-initialised right after being freed: wait for the driver to settle
     if (g_stopTick != 0) {
         const DWORD since = GetTickCount() - g_stopTick;
-        if (since < 600)
-            Sleep(600 - since);
+        if (since < 1200)
+            Sleep(1200 - since);
     }
 
     if (!BASS_ASIO_Init(device, BASS_ASIO_THREAD)) {
@@ -301,6 +318,7 @@ bool AsioOutput::rateSupported(int) { return false; }
 int AsioOutput::currentRate() { return 0; }
 void AsioOutput::waitSettle(int) {}
 bool AsioOutput::recentlyStopped(int) { return false; }
+bool AsioOutput::crashedLastStart() { return false; }
 void AsioOutput::logLine(const QString &) {}
 
 #endif

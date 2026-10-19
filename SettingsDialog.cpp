@@ -668,7 +668,11 @@ void SettingsDialog::initDeviceTab()
                 settings->setValue("AsioLastDevice", synth->asioDevice());
         };
 
+        auto busy = std::make_shared<bool>(false);       // ignore clicks while a driver is being switched
         connect(cbType, QOverload<int>::of(&QComboBox::activated), this, [=](int i) {
+            if (*busy) return;
+            *busy = true;
+            struct Rel { std::shared_ptr<bool> b; ~Rel() { *b = false; } } rel{busy};
             const bool asio = cbType->itemData(i).toInt() == 1;
             if (asio) {
                 int k = settings->value("AsioLastDevice", 0).toInt();
@@ -680,6 +684,9 @@ void SettingsDialog::initDeviceTab()
             refresh();
         });
         connect(cbOut, QOverload<int>::of(&QComboBox::activated), this, [=](int k) {
+            if (*busy) return;
+            *busy = true;
+            struct Rel { std::shared_ptr<bool> b; ~Rel() { *b = false; } } rel{busy};
             applyOutput(synth->asioDevice() >= 0 || cbType->currentData().toInt() == 1, k);
             refresh();
         });

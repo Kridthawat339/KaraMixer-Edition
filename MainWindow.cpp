@@ -296,6 +296,10 @@ MainWindow::MainWindow(QWidget *parent) :
         int asio = settings->value("AsioDevice", -1).toInt();
         if (asio >= AsioOutput::devices().count())
             asio = -1;
+        if (AsioOutput::crashedLastStart()) {          // the driver hung / crashed the last time: start on the normal device
+            asio = -1;
+            settings->setValue("AsioDevice", -1);
+        }
         AsioOutput::setPairMask(settings->value("AsioPairMask", 1).toUInt());
         AsioOutput::setSpeakerSplit(settings->value("AsioSpeakerSplit", false).toBool());
         AsioOutput::setBufferSize(settings->value("AsioBufferSamples", 0).toInt());
