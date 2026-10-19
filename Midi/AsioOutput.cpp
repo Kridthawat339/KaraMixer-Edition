@@ -30,13 +30,15 @@ namespace {
     void CALLBACK gainDsp(HDSP, DWORD, void *buffer, DWORD length, void *)
     {
         float *p = static_cast<float *>(buffer);
-        const size_t frames = length / (2 * sizeof(float));
+        BASS_CHANNELINFO gi;
+        const size_t chans = (g_mix && BASS_ChannelGetInfo(g_mix, &gi) && gi.chans > 0) ? gi.chans : 2;   // 2, or 4..8 in split mode
+        const size_t frames = length / (chans * sizeof(float));
         const float target = g_gainTarget.load();
         float g = g_gainCur;
         for (size_t i = 0; i < frames; i++) {
             g += (target - g) * 0.002f;
-            p[2 * i] *= g;
-            p[2 * i + 1] *= g;
+            for (size_t c = 0; c < chans; c++)
+                p[chans * i + c] *= g;
         }
         g_gainCur = g;
     }
@@ -44,6 +46,8 @@ namespace {
 
     // ---- device panel state ----
     unsigned g_pairMask   = 1;      // enabled stereo pairs (bit n = outputs 2n, 2n+1)
+    bool     g_split      = false;  // speaker split (see AsioOutput.h)
+    int      g_splitCh    = 0;      // driver outputs used by the running split (0 = off)
     int      g_bufLen     = 0;      // requested ASIO buffer length (samples), 0 = driver default
     int      g_outputs    = 0;      // output channels of the running driver
     QStringList g_chanNames;        // their names
@@ -144,9 +148,19 @@ bool AsioOutput::start(unsigned long source, int device)
     if (rate < 8000.0)
         rate = 44100.0;
 
-    // multi-channel main mixer -> stereo for ASIO outputs 1+2
-    g_mix = BASS_Mixer_StreamCreate((DWORD)rate, 2, BASS_STREAM_DECODE | BASS_SAMPLE_FLOAT);
-    if (!g_mix || !BASS_Mixer_StreamAddChannel(g_mix, (DWORD)source, BASS_MIXER_CHAN_DOWNMIX)) {
+    // speaker split: keep the main mixer's own channel layout (front / rear / centre+sub / side = output pairs 1..4)
+    g_splitCh = 0;
+    if (g_split) {
+        const int usable = g_outputs & ~1;
+        if (usable >= 4)
+            g_splitCh = usable > 8 ? 8 : usable;
+        else
+            asioLog(QString("speaker split ignored: the driver has only %1 output(s)").arg(g_outputs));
+    }
+
+    // multi-channel main mixer -> stereo for ASIO outputs 1+2 (split mode: 4..8 channels, nothing is mixed down)
+    g_mix = BASS_Mixer_StreamCreate((DWORD)rate, g_splitCh ? (DWORD)g_splitCh : 2, BASS_STREAM_DECODE | BASS_SAMPLE_FLOAT);
+    if (!g_mix || !BASS_Mixer_StreamAddChannel(g_mix, (DWORD)source, g_splitCh ? 0 : BASS_MIXER_CHAN_DOWNMIX)) {
         asioLog("FAIL"); g_error = QString("ASIO mixer failed (error %1)").arg(BASS_ErrorGetCode());
         if (g_mix) BASS_StreamFree(g_mix);
         g_mix = 0;
@@ -165,7 +179,8 @@ bool AsioOutput::start(unsigned long source, int device)
     BASS_ChannelSetDSP(g_mix, gainDsp, nullptr, 0);
 
     // which stereo pairs get the main mix (default outputs 1+2); pairs the driver does not have are dropped
-    unsigned mask = g_pairMask;
+    // (split mode ignores the mask: the channels go to outputs 1..n in order)
+    unsigned mask = g_splitCh ? 1u : g_pairMask;
     for (int pr = 0; pr < 16; pr++)
         if ((mask >> pr) & 1u) { if (2 * pr + 1 >= g_outputs) mask &= ~(1u << pr); }
     if (mask == 0) mask = 1;
@@ -175,7 +190,10 @@ bool AsioOutput::start(unsigned long source, int device)
     bool multi = (mask & ~(1u << firstPair)) != 0;
 
     bool chOk = false;
-    if (!multi) {
+    if (g_splitCh) {
+        chOk = BASS_ASIO_ChannelEnableBASS(FALSE, 0, g_mix, TRUE) != FALSE;      // all channels of the mixer -> outputs 1..n
+        asioLog(QString("speaker split: %1 channels -> outputs 1..%1").arg(g_splitCh));
+    } else if (!multi) {
         chOk = BASS_ASIO_ChannelEnableBASS(FALSE, (DWORD)(2 * firstPair), g_mix, TRUE) != FALSE;   // one pair: BASSASIO feeds it itself
     } else {
         chOk = true;
@@ -223,6 +241,7 @@ void AsioOutput::stop()
         g_mix = 0;
     }
     g_outputs = 0;
+    g_splitCh = 0;
     g_chanNames.clear();
 }
 
@@ -234,6 +253,9 @@ float AsioOutput::gain() { return g_gainTarget.load(); }
 
 void AsioOutput::setPairMask(unsigned mask) { g_pairMask = mask ? mask : 1u; }
 unsigned AsioOutput::pairMask() { return g_pairMask; }
+void AsioOutput::setSpeakerSplit(bool on) { g_split = on; }
+bool AsioOutput::speakerSplit() { return g_split; }
+int AsioOutput::splitChannels() { return g_active ? g_splitCh : 0; }
 void AsioOutput::setBufferSize(int samples) { g_bufLen = samples > 0 ? samples : 0; }
 int AsioOutput::bufferSize() { return g_bufLen; }
 int AsioOutput::outputCount() { return g_active ? g_outputs : 0; }
@@ -267,6 +289,9 @@ void AsioOutput::setGain(float) {}
 float AsioOutput::gain() { return 1.0f; }
 void AsioOutput::setPairMask(unsigned) {}
 unsigned AsioOutput::pairMask() { return 1; }
+void AsioOutput::setSpeakerSplit(bool) {}
+bool AsioOutput::speakerSplit() { return false; }
+int AsioOutput::splitChannels() { return 0; }
 void AsioOutput::setBufferSize(int) {}
 int AsioOutput::bufferSize() { return 0; }
 int AsioOutput::outputCount() { return 0; }

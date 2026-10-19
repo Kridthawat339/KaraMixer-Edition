@@ -20,6 +20,11 @@ namespace AsioOutput
     // ---- audio device panel (Settings) ----
     void        setPairMask(unsigned mask);            // bit n = driver outputs 2n+1 / 2n+2 receive the main mix (default 1 = outputs 1+2)
     unsigned    pairMask();
+    // Speaker split: instead of one stereo mix copied to the chosen pairs, the main mixer's speaker layout goes to the
+    // driver as it is: front -> outputs 1+2, rear -> 3+4, centre/sub -> 5+6, side -> 7+8 (needs 4+ outputs; else off)
+    void        setSpeakerSplit(bool on);
+    bool        speakerSplit();
+    int         splitChannels();                       // driver outputs used by the split (0 = not splitting)
     void        setBufferSize(int samples);            // ASIO buffer length in samples, 0 = driver default
     int         bufferSize();
     int         outputCount();                         // output channels of the running driver (0 when ASIO is not running)

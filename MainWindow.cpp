@@ -297,6 +297,7 @@ MainWindow::MainWindow(QWidget *parent) :
         if (asio >= AsioOutput::devices().count())
             asio = -1;
         AsioOutput::setPairMask(settings->value("AsioPairMask", 1).toUInt());
+        AsioOutput::setSpeakerSplit(settings->value("AsioSpeakerSplit", false).toBool());
         AsioOutput::setBufferSize(settings->value("AsioBufferSamples", 0).toInt());
         synth->setAsioDevice(asio);
 

@@ -489,6 +489,9 @@ void SettingsDialog::initDeviceTab()
         chLay->setSpacing(2);
         QComboBox *cbSr = new QComboBox(dev);
         QComboBox *cbBuf = new QComboBox(dev);
+        QCheckBox *cbSplit = new QCheckBox(QString::fromUtf8("แยกลำโพงตามแทรก (ASIO): หน้า → 1+2, หลัง → 3+4, กลาง/ซับ → 5+6, ข้าง → 7+8"), dev);
+        cbSplit->setToolTip(QString::fromUtf8("ส่งตำแหน่งลำโพงที่ตั้งไว้ในแต่ละแทรก (เมนูแยกลำโพง) ออกเป็นคู่เอาต์พุตของการ์ดเสียง ต้องมีเอาต์พุตอย่างน้อย 4 ช่อง\n"
+                                                "เมื่อเปิดใช้ ตัวเลือก Active output channels ด้านบนจะไม่ถูกใช้"));
         QLabel *note = new QLabel(dev);
         note->setWordWrap(true);
         cbOut->setMinimumWidth(260);
@@ -505,7 +508,8 @@ void SettingsDialog::initDeviceTab()
         dg->addWidget(cbSr, 3, 1, 1, 2);
         dg->addWidget(new QLabel(QStringLiteral("Audio buffer size:"), dev), 4, 0, Qt::AlignRight | Qt::AlignVCenter);
         dg->addWidget(cbBuf, 4, 1, 1, 2);
-        dg->addWidget(note, 5, 0, 1, 3);
+        dg->addWidget(cbSplit, 5, 0, 1, 3);
+        dg->addWidget(note, 6, 0, 1, 3);
         dg->setColumnStretch(1, 1);
         dvl->insertWidget(dvl->indexOf(ui->groupBox_12), dev);
 
@@ -584,6 +588,15 @@ void SettingsDialog::initDeviceTab()
                 c->setEnabled(false);
                 chLay->addWidget(c);
                 c->setToolTip(QString::fromUtf8("Windows Audio ใช้ช่องสเตอริโอของอุปกรณ์เอง — เลือกช่องได้เมื่อใช้ ASIO"));
+            }
+
+            // speaker split: ASIO with 4+ output channels only; the pair list above is not used while it is on
+            {
+                QSignalBlocker bs(cbSplit);
+                const bool canSplit = isAsio && AsioOutput::outputCount() >= 4;
+                cbSplit->setEnabled(canSplit || AsioOutput::speakerSplit());
+                cbSplit->setChecked(AsioOutput::speakerSplit());
+                chFrame->setEnabled(!(AsioOutput::speakerSplit() && AsioOutput::splitChannels() > 0));
             }
 
             // sample rate
@@ -667,6 +680,22 @@ void SettingsDialog::initDeviceTab()
         connect(cbOut, QOverload<int>::of(&QComboBox::activated), this, [=](int k) {
             applyOutput(synth->asioDevice() >= 0 || cbType->currentData().toInt() == 1, k);
             refresh();
+        });
+        connect(cbSplit, &QCheckBox::clicked, this, [=](bool on) {
+            if (on == AsioOutput::speakerSplit())
+                return;
+            AsioOutput::setSpeakerSplit(on);
+            settings->setValue("AsioSpeakerSplit", on);
+            mainWin->stop();
+            if (synth->asioDevice() >= 0 && synth->isOpened()) {     // restart the ASIO feed with / without the split
+                synth->close();
+                synth->open();
+                if (synth->asioDevice() < 0)
+                    QMessageBox::warning(this, tr("ASIO"), tr("Could not start this ASIO driver. The normal output device is used instead.")
+                                         + QStringLiteral("\n") + synth->asioError());
+                settings->setValue("AsioDevice", synth->asioDevice());
+            }
+            QTimer::singleShot(0, dev, [refresh]() { refresh(); });
         });
 
         // -------- test note --------

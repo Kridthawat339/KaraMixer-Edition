@@ -34,6 +34,10 @@ private:
     MidiSynthesizer *synth;
 
     QStringList deviceNames;
+
+    // strip shown in each table row (same order as the mixer: Canthai sits between Pipe and Strings)
+    QList<InstrumentType> rowTypes;
+    InstrumentType typeAt(int row) const { return rowTypes.value(row, static_cast<InstrumentType>(row)); }
 };
 
 #endif // SPEAKERDIALOG_H

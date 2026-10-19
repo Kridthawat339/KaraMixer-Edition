@@ -24,10 +24,17 @@ SpeakerDialog::SpeakerDialog(QWidget *parent, QMap<InstrumentType, InstCh *> *ch
     for (const QString &n : MidiSynthesizer::audioDevices())
         deviceNames.append(n);
 
+    // row order = mixer order: the Canthai strip (numbered last) is shown between Pipe and Strings
+    rowTypes = chInstMap->keys();
+    if (rowTypes.removeOne(InstrumentType::Canthai)) {
+        const int at = rowTypes.indexOf(InstrumentType::Strings);
+        rowTypes.insert(at >= 0 ? at : rowTypes.count(), InstrumentType::Canthai);
+    }
+
     // setup speaker table
-    for (int i=0; i<chInstMap->keys().count(); i++)
+    for (int i=0; i<rowTypes.count(); i++)
     {
-        QString name = chInstMap->values()[i]->fullInstrumentName();
+        QString name = chInstMap->value(rowTypes[i])->fullInstrumentName();
         QTableWidgetItem *nameItem = new QTableWidgetItem(name);
 
         ui->tableSpeaker->insertRow(i);
@@ -101,13 +108,13 @@ void SpeakerDialog::setSpeaker(int number)
     {
         int row = selection.at(i).row();
 
-        InstrumentType instType = static_cast<InstrumentType>(row);
+        InstrumentType instType = typeAt(row);
         synth->setDevice(instType, device);
         synth->setSpeaker(instType, speaker);
 
         setItems(row);
 
-        settings.setArrayIndex(row);
+        settings.setArrayIndex(static_cast<int>(instType));   // saved by strip number, not by table row
         settings.setValue("Device", synth->device(instType));
         settings.setValue("Speaker", static_cast<int>(synth->speaker(instType)));
     }
@@ -137,7 +144,7 @@ void SpeakerDialog::setItems(int row)
     QTableWidgetItem *itemDevice = ui->tableSpeaker->item(row, 1);
     QTableWidgetItem *itemSpeaker = ui->tableSpeaker->item(row, 2);
 
-    auto t = static_cast<InstrumentType>(row);
+    auto t = typeAt(row);
 
 
     // set device icon, name
