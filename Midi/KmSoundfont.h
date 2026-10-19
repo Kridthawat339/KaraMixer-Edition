@@ -9,6 +9,9 @@
 // when the file was locked. On any other computer the key is different, the file is refused and has to be locked
 // again for that computer's ID.
 //
+// USB BOUND (.kmsf v3): the same, but the key is derived from the USB ID of a flash drive (UsbDongle.h) instead of the
+// machine; the file opens only while that flash drive is plugged in (plug it in before starting the program).
+//
 // File layout: "KMSF2\0\0\0" (8) | nonce (12) | original size, little endian (8) | key tag (4) | ciphertext
 //   (the old "KMSF1" files were not bound to a machine: they are no longer accepted and must be locked again)
 //
@@ -34,11 +37,13 @@ namespace KmSf {
 
 static const int kHeader = 32;
 static const char kMagic[8] = { 'K', 'M', 'S', 'F', '2', 0, 0, 0 };      // machine-bound format
+static const char kMagic3[8] = { 'K', 'M', 'S', 'F', '3', 0, 0, 0 };     // USB-flash-drive-bound format
 static const char kMagicOld[8] = { 'K', 'M', 'S', 'F', '1', 0, 0, 0 };   // old, not machine-bound (refused)
 
 // why the last openFont() refused a file, and which files were refused because they belong to another machine
 inline QString &lastError() { static QString e; return e; }
 inline QStringList &foreignFiles() { static QStringList l; return l; }
+inline QStringList &foreignUsbFiles() { static QStringList l; return l; }   // refused because their USB drive is not plugged in
 
 // 8 hex digits, upper case; empty if the text is not a valid ID (spaces / dashes are ignored)
 inline QString normalizeId(const QString &text)
@@ -115,6 +120,17 @@ inline void keyForMachine(const QString &hwid, uint8_t key[32])
     std::memcpy(key, h.constData(), 32);
 }
 
+// the key of one USB flash drive: HMAC(master key, "KMSF3|" + USB ID)
+inline void keyForUsb(const QString &usbId, uint8_t key[32])
+{
+    uint8_t mk[32];
+    masterKey(mk);
+    const QByteArray h = QMessageAuthenticationCode::hash(QByteArray("KMSF3|") + usbId.toUpper().toLatin1(),
+                                                          QByteArray(reinterpret_cast<const char *>(mk), 32),
+                                                          QCryptographicHash::Sha256);
+    std::memcpy(key, h.constData(), 32);
+}
+
 // 4 bytes that tell whether a file was locked for the machine this key belongs to (reveal nothing about the key)
 inline void keyTag(const uint8_t key[32], uint8_t tag[4])
 {
@@ -141,8 +157,8 @@ inline void crypt(const uint8_t key[32], const uint8_t nonce[12], uint64_t pos, 
     }
 }
 
-// .sf2 -> .kmsf, locked for the machine with this Hardware ID
-inline bool protectFile(const QString &src, const QString &dst, const QString &hwid, QString *error = nullptr)
+// .sf2 -> .kmsf, locked for the machine with this Hardware ID (usb = false) or the flash drive with this USB ID (usb = true)
+inline bool protectFile(const QString &src, const QString &dst, const QString &hwid, QString *error = nullptr, bool usb = false)
 {
     const QString id = normalizeId(hwid);
     if (id.isEmpty()) {
@@ -168,14 +184,17 @@ inline bool protectFile(const QString &src, const QString &dst, const QString &h
     }
 
     uint8_t key[32], nonce[12], tag[4];
-    keyForMachine(id, key);
+    if (usb)
+        keyForUsb(id, key);
+    else
+        keyForMachine(id, key);
     keyTag(key, tag);
     for (int i = 0; i < 12; i++)
         nonce[i] = uint8_t(QRandomGenerator::global()->generate() & 0xff);
 
     const uint64_t size = uint64_t(in.size());
     uint8_t head[kHeader] = {};
-    std::memcpy(head, kMagic, 8);
+    std::memcpy(head, usb ? kMagic3 : kMagic, 8);
     std::memcpy(head + 8, nonce, 12);
     for (int b = 0; b < 8; b++)
         head[20 + b] = uint8_t(size >> (8 * b));
@@ -268,7 +287,8 @@ inline HSOUNDFONT openFont(const QString &path, DWORD flags)
         delete r;
         return 0;
     }
-    if (std::memcmp(head, kMagic, 8) != 0) {
+    const bool isUsb = std::memcmp(head, kMagic3, 8) == 0;
+    if (!isUsb && std::memcmp(head, kMagic, 8) != 0) {
         delete r;
         return 0;
     }
@@ -279,8 +299,27 @@ inline HSOUNDFONT openFont(const QString &path, DWORD flags)
         delete r;
         return 0;
     }
-    keyForMachine(thisMachineId(), r->key);
-    {
+    if (isUsb) {
+        // locked for a USB flash drive: it opens only while that drive is plugged in
+        bool found = false;
+        for (const QString &id : UsbDongle::connectedIds()) {
+            uint8_t k[32], tag[4];
+            keyForUsb(id, k);
+            keyTag(k, tag);
+            if (std::memcmp(tag, head + 28, 4) == 0) {
+                std::memcpy(r->key, k, 32);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            lastError() = QStringLiteral("this soundfont is locked for a USB flash drive that is not plugged in: plug in that flash drive and restart");
+            foreignUsbFiles() << path;
+            delete r;
+            return 0;
+        }
+    } else {
+        keyForMachine(thisMachineId(), r->key);
         uint8_t tag[4];
         keyTag(r->key, tag);
         if (std::memcmp(tag, head + 28, 4) != 0) {      // locked for another computer

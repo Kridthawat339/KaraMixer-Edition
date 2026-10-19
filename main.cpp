@@ -132,6 +132,19 @@ int main(int argc, char *argv[])
     delete splash;
     delete pixmap;
 
+    // locked soundfonts made for a USB flash drive that is not plugged in
+    if (!KmSf::foreignUsbFiles().isEmpty()) {
+        QStringList names;
+        for (const QString &f : KmSf::foreignUsbFiles())
+            names << QFileInfo(f).fileName();
+        QMessageBox box(QMessageBox::NoIcon, QString::fromUtf8("Soundfont ที่ล็อกไว้"),
+                        QString::fromUtf8("ซาวด์ฟอนต์ต่อไปนี้ถูกล็อกด้วยแฟลชไดร์ USB ซึ่งไม่ได้เสียบอยู่:\n\n")
+                            + names.join("\n")
+                            + QString::fromUtf8("\n\nเสียบแฟลชไดร์ตัวที่ใช้ล็อก แล้วเปิดโปรแกรมใหม่"),
+                        QMessageBox::Ok, mixer);
+        box.exec();
+    }
+
     // locked soundfonts made for another computer (or in the old format) were skipped: tell the user what to do
     if (!KmSf::foreignFiles().isEmpty()) {
         QStringList names;

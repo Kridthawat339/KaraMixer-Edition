@@ -2,8 +2,9 @@
 #define LOCKSOUNDFONTDIALOG_H
 
 // "Lock Soundfont": pick a soundfont (one that is already loaded, or any .sf2 on disk), type the Hardware ID of the
-// computer it is for, press Lock and a protected copy (.kmsf, plays only in KaraMixer AND only on the computer with
-// that Hardware ID) is saved in the Kmsf folder. The ID has to be typed again for every lock.
+// computer it is for (or the USB ID of a flash drive), press Lock and a protected copy (.kmsf, plays only in KaraMixer
+// AND only on the computer with that Hardware ID / while that flash drive is plugged in) is saved in the Kmsf folder.
+// The ID has to be typed again for every lock.
 // Header-only, no Q_OBJECT (all connections are lambdas).
 
 #include <QDialog>
@@ -20,6 +21,7 @@
 #include <QClipboard>
 #include <QApplication>
 #include <QSettings>
+#include <QComboBox>
 
 #include "Config.h"
 #include "Utils.h"
@@ -38,9 +40,9 @@ public:
         v->setSpacing(8);
 
         QLabel *help = new QLabel(QString::fromUtf8(
-            "เลือก Soundfont ที่จะล็อก กรอก Hardware ID ของเครื่องที่จะใช้งาน แล้วกด Lock\n"
-            "ระบบจะสร้างไฟล์ .kmsf (เล่นได้เฉพาะใน KaraMixer และเฉพาะเครื่องที่มี ID ตรงกัน แก้ไขไม่ได้) "
-            "บันทึกในโฟลเดอร์ Kmsf (อยู่ข้างโฟลเดอร์ Config) ถ้าไปใช้เครื่องอื่นต้องล็อกใหม่ด้วย ID ของเครื่องนั้น"), this);
+            "เลือก Soundfont ที่จะล็อก เลือกว่าจะผูกกับ \"เครื่อง\" หรือ \"แฟลชไดร์ USB\" กรอก ID แล้วกด Lock\n"
+            "ระบบจะสร้างไฟล์ .kmsf (เล่นได้เฉพาะใน KaraMixer แก้ไขไม่ได้) บันทึกในโฟลเดอร์ Kmsf (อยู่ข้างโฟลเดอร์ Config)\n"
+            "แบบเครื่อง: ใช้ได้เฉพาะเครื่องที่มี Hardware ID ตรงกัน  แบบ USB: ใช้ได้เมื่อเสียบแฟลชไดร์ตัวนั้นก่อนเปิดโปรแกรม"), this);
         help->setWordWrap(true);
         v->addWidget(help);
 
@@ -48,9 +50,22 @@ public:
         list->setMinimumHeight(160);
         v->addWidget(list, 1);
 
-        // Hardware ID of this computer (what the PRO licence uses too) and the ID the file is locked for
+        // what the file is locked to: this computer's Hardware ID or the USB ID of a flash drive
         {
-            QLabel *mine = new QLabel(QString::fromUtf8("Hardware ID ของเครื่องนี้: ") + KmSf::thisMachineId(), this);
+            modeBox = new QComboBox(this);
+            modeBox->addItem(QString::fromUtf8("ผูกกับเครื่อง (Hardware ID)"), 0);
+            modeBox->addItem(QString::fromUtf8("ผูกกับแฟลชไดร์ USB (USB ID)"), 1);
+            usbBox = new QComboBox(this);
+            QPushButton *usbRefresh = new QPushButton(QString::fromUtf8("ค้นหาไดร์ใหม่"), this);
+            QHBoxLayout *r0 = new QHBoxLayout();
+            r0->addWidget(modeBox);
+            r0->addWidget(usbBox, 1);
+            r0->addWidget(usbRefresh);
+            v->addLayout(r0);
+            connect(usbRefresh, &QPushButton::clicked, this, [this]() { fillUsb(true); });
+            usbRefreshBtn = usbRefresh;
+
+            mine = new QLabel(this);
             QFont mono(QString::fromLatin1("Consolas"));
             mono.setStyleHint(QFont::Monospace);
             mono.setPointSize(12);
@@ -58,23 +73,27 @@ public:
             mine->setFont(mono);
             mine->setTextInteractionFlags(Qt::TextSelectableByMouse);
             QPushButton *copy = new QPushButton(QString::fromUtf8("คัดลอก"), this);
+            copy->setObjectName(QString::fromLatin1("lockCopy"));
             QHBoxLayout *r1 = new QHBoxLayout();
             r1->addWidget(mine, 1);
             r1->addWidget(copy);
             v->addLayout(r1);
-            connect(copy, &QPushButton::clicked, this, []() { QApplication::clipboard()->setText(KmSf::thisMachineId()); });
+            connect(copy, &QPushButton::clicked, this, [this]() { QApplication::clipboard()->setText(shownId()); });
 
             idEdit = new QLineEdit(this);
             idEdit->setPlaceholderText(QString::fromUtf8("กรอก Hardware ID ของเครื่องปลายทาง (8 ตัว เช่น 556BAE3D)"));
             idEdit->setMaxLength(12);
             idEdit->setFont(mono);
             idEdit->setMinimumHeight(34);
-            QPushButton *useMine = new QPushButton(QString::fromUtf8("ใช้ ID เครื่องนี้"), this);
+            useMine = new QPushButton(QString::fromUtf8("ใช้ ID เครื่องนี้"), this);
             QHBoxLayout *r2 = new QHBoxLayout();
             r2->addWidget(idEdit, 1);
             r2->addWidget(useMine);
             v->addLayout(r2);
-            connect(useMine, &QPushButton::clicked, this, [this]() { idEdit->setText(KmSf::thisMachineId()); });
+            connect(useMine, &QPushButton::clicked, this, [this]() { idEdit->setText(shownId()); });
+            connect(modeBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updateMode(); });
+            connect(usbBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updateMode(); });
+            fillUsb(true);
         }
 
         QHBoxLayout *h = new QHBoxLayout();
@@ -119,6 +138,46 @@ private:
     QPushButton *lockBtn = nullptr;
     QLabel *status = nullptr;
     QLineEdit *idEdit = nullptr;
+    QComboBox *modeBox = nullptr;
+    QComboBox *usbBox = nullptr;
+    QPushButton *usbRefreshBtn = nullptr;
+    QPushButton *useMine = nullptr;
+    QLabel *mine = nullptr;
+
+    bool usbMode() const { return modeBox && modeBox->currentData().toInt() == 1; }
+
+    // the ID shown above the entry: this computer's Hardware ID, or the USB ID of the selected flash drive
+    QString shownId() const
+    {
+        return usbMode() ? usbBox->currentData().toString() : KmSf::thisMachineId();
+    }
+
+    void fillUsb(bool force)
+    {
+        usbBox->blockSignals(true);
+        usbBox->clear();
+        for (const UsbDongle::Drive &d : UsbDongle::drives(force))
+            usbBox->addItem(d.label(), d.id);
+        usbBox->blockSignals(false);
+        updateMode();
+    }
+
+    void updateMode()
+    {
+        const bool usb = usbMode();
+        usbBox->setVisible(usb);
+        usbRefreshBtn->setVisible(usb);
+        useMine->setText(usb ? QString::fromUtf8("ใช้ ID ไดร์ที่เลือก") : QString::fromUtf8("ใช้ ID เครื่องนี้"));
+        idEdit->setPlaceholderText(usb ? QString::fromUtf8("กรอก USB ID ของแฟลชไดร์ (8 ตัว เช่น 1A2B3C4D)")
+                                       : QString::fromUtf8("กรอก Hardware ID ของเครื่องปลายทาง (8 ตัว เช่น 556BAE3D)"));
+        if (usb) {
+            const QString id = shownId();
+            mine->setText(id.isEmpty() ? QString::fromUtf8("ไม่พบแฟลชไดร์ USB (เสียบแล้วกด \"ค้นหาไดร์ใหม่\")")
+                                       : QString::fromUtf8("USB ID ของไดร์ที่เลือก: ") + id);
+        } else {
+            mine->setText(QString::fromUtf8("Hardware ID ของเครื่องนี้: ") + KmSf::thisMachineId());
+        }
+    }
 
     void refill()
     {
@@ -146,7 +205,7 @@ private:
         // the Hardware ID of the computer the soundfont is for: typed in every time
         const QString id = KmSf::normalizeId(idEdit->text());
         if (id.isEmpty()) {
-            status->setText(QString::fromUtf8("กรุณากรอก Hardware ID ของเครื่องปลายทางให้ถูกต้อง (8 ตัว 0-9, A-F)"));
+            status->setText(QString::fromUtf8("กรุณากรอก ID ให้ถูกต้อง (8 ตัว 0-9, A-F)"));
             idEdit->setFocus();
             return;
         }
@@ -154,7 +213,8 @@ private:
         // <data folder>/Kmsf, next to the Config and Data folders; the ID is part of the name
         const QString outDir = QFileInfo(Config::CONFIG_DIR_PATH).dir().absoluteFilePath(QString::fromUtf8("Kmsf"));
         QDir().mkpath(outDir);
-        const QString dst = QDir(outDir).absoluteFilePath(QFileInfo(src).completeBaseName() + QString::fromUtf8("-") + id
+        const bool usb = usbMode();
+        const QString dst = QDir(outDir).absoluteFilePath(QFileInfo(src).completeBaseName() + QString::fromUtf8(usb ? "-usb-" : "-") + id
                                                           + QString::fromUtf8(".kmsf"));
         if (QFileInfo::exists(dst)
             && QMessageBox::question(this, QString::fromUtf8("Lock Soundfont"),
@@ -166,7 +226,7 @@ private:
         QApplication::setOverrideCursor(Qt::WaitCursor);
         qApp->processEvents();
         QString err;
-        const bool ok = KmSf::protectFile(src, dst, id, &err);
+        const bool ok = KmSf::protectFile(src, dst, id, &err, usb);
         QApplication::restoreOverrideCursor();
         lockBtn->setEnabled(true);
 
@@ -177,10 +237,12 @@ private:
 
         idEdit->clear();     // the ID has to be typed again for the next lock
 
-        if (id != KmSf::thisMachineId()) {
-            // made for another computer: it cannot play here, so it is not added to this program's list
-            status->setText(QString::fromUtf8("ล็อกแล้วสำหรับเครื่อง ID ") + id + QString::fromUtf8(" (ใช้ได้เฉพาะเครื่องนั้น): ")
-                            + QDir::toNativeSeparators(dst));
+        const bool playsHere = usb ? UsbDongle::connectedIds(true).contains(id) : (id == KmSf::thisMachineId());
+        if (!playsHere) {
+            // made for another computer / another flash drive: it cannot play here, so it is not added to the list
+            status->setText(QString::fromUtf8(usb ? "ล็อกแล้วสำหรับแฟลชไดร์ USB ID " : "ล็อกแล้วสำหรับเครื่อง ID ") + id
+                            + QString::fromUtf8(" (ใช้ได้เฉพาะ") + QString::fromUtf8(usb ? "เมื่อเสียบไดร์นั้น" : "เครื่องนั้น")
+                            + QString::fromUtf8("): ") + QDir::toNativeSeparators(dst));
             return;
         }
 
@@ -192,7 +254,8 @@ private:
             QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
             st.setValue("SynthSoundfonts", QVariant::fromValue(synth->soundfontFiles()));
         }
-        status->setText(QString::fromUtf8("ล็อกแล้วสำหรับเครื่อง ID ") + id + QString::fromUtf8(": ") + QDir::toNativeSeparators(dst));
+        status->setText(QString::fromUtf8(usb ? "ล็อกแล้วสำหรับแฟลชไดร์ USB ID " : "ล็อกแล้วสำหรับเครื่อง ID ") + id
+                        + QString::fromUtf8(": ") + QDir::toNativeSeparators(dst));
     }
 };
 
