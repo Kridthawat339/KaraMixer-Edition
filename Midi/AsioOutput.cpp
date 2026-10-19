@@ -132,7 +132,11 @@ bool AsioOutput::start(unsigned long source, int device)
 
     if (!BASS_ASIO_Init(device, BASS_ASIO_THREAD)) {
         const int ec = BASS_ASIO_ErrorGetCode();
-        asioLog(QString("FAIL: init error %1 (driver index %2)").arg(ec).arg(device));
+        {
+            BASS_ASIO_DEVICEINFO di; QString nm;
+            if (BASS_ASIO_GetDeviceInfo((DWORD)device, &di)) nm = QString::fromLocal8Bit(di.name);
+            asioLog(QString("FAIL: init error %1 (driver index %2: %3)").arg(ec).arg(device).arg(nm));
+        }
         g_error = QString("ASIO init failed (error %1)").arg(ec);
         if (ec == 3)    // BASS_ASIO_ERROR_DRIVER
             g_error += QString::fromUtf8("\nไดรเวอร์ ASIO เปิดไม่ได้: อาจถูกโปรแกรมอื่นใช้อยู่ (ปิดโปรแกรมเสียงอื่น / ปิด ASIO4ALL ที่ค้างอยู่), "

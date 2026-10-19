@@ -675,9 +675,27 @@ void SettingsDialog::initDeviceTab()
             struct Rel { std::shared_ptr<bool> b; ~Rel() { *b = false; } } rel{busy};
             const bool asio = cbType->itemData(i).toInt() == 1;
             if (asio) {
+                // try the last used driver first, then the others: the first one in the list is often a driver that
+                // cannot start on this PC (not installed for this bit-ness, device unplugged, busy ...)
+                const int n = AsioOutput::devices().count();
                 int k = settings->value("AsioLastDevice", 0).toInt();
-                if (k < 0 || k >= AsioOutput::devices().count()) k = 0;
-                applyOutput(true, k);
+                if (k < 0 || k >= n) k = 0;
+                mainWin->stop();
+                bool ok = false;
+                QString why;
+                for (int t = 0; t < n && !ok; t++) {
+                    const int idx = (k + t) % n;
+                    ok = synth->setAsioDevice(idx);
+                    if (!ok) why = synth->asioError();
+                }
+                settings->setValue("AsioDevice", synth->asioDevice());
+                if (ok) {
+                    settings->setValue("AsioLastDevice", synth->asioDevice());
+                } else {
+                    QMessageBox::warning(this, tr("ASIO"),
+                        tr("Could not start any ASIO driver. The normal output device is used instead.")
+                        + (why.isEmpty() ? QString() : QStringLiteral("\n") + why));
+                }
             } else {
                 applyOutput(false, qBound(0, synth->defaultDevice() - 1, qMax(0, normalCount() - 1)));
             }
