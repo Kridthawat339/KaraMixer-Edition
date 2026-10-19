@@ -156,7 +156,7 @@ public:
     void setBusGroup(InstrumentType t, int group);
     void setVolume(InstrumentType t, int volume);
     void setPan(InstrumentType t, int pan);
-    void setReverbStrong(bool strong);               // false = 1.4.6 Final strength (tight), true = v2 stronger / longer tail
+    void setReverbStrong(bool strong);               // false = 1.4.6 Final strength (tight), true = v3 stronger / longer tail
     bool isReverbStrong() const { return reverbStrong; }
     void setReverb(InstrumentType t, int level);   // 0 = dry, 100 = very wet
     double trim(InstrumentType t) { return instMap[t].trimDb; }
@@ -239,7 +239,8 @@ public:
     void removeVSTiFile(int vstiIndex);
     #endif
 
-    const int HANDLE_STREAM_COUNT = 62;
+    const int HANDLE_STREAM_COUNT = 63;        // 46 MIDI/VSTi + 16 buses + the Canthai strip (stream 62)
+    const int HANDLE_CANTHAI = 62;
     const int HANDLE_MIDI_COUNT = 46;
     const int HANDLE_VSTI_START = 42;
     const int HANDLE_VSTI_COUNT = 4;
@@ -283,6 +284,14 @@ private:
     QMap<InstrumentType, Reverb2FX *> sendRv;       // per-channel reverb (free-verb on the channel stream)
     void attachSendReverb(InstrumentType t, DWORD stream);
     InstrumentType chInstType[16];
+    int chProgram[16];          // last program change of every channel (to re-route when the preset changes)
+
+    // Strip that plays a melodic program: normally the family of the program, but program 24 (index 23) goes to the
+    // Canthai (khaen) strip when the soundfont preset is 101 / 108 / 110 (the MIDI's own bank select is not used)
+    InstrumentType melodicTypeFor(int ch, int program) const;
+    static bool isCanthaiBank(int bank) { return bank == 101 || bank == 108 || bank == 110; }
+    // every MIDI stream that carries notes (melodic, drums, Canthai - not the VSTi / bus streams)
+    bool isMidiStrip(int i) const { return i < HANDLE_MIDI_COUNT - 4 || i == HANDLE_CANTHAI; }
 
     #ifndef __linux__
     QString mVstiFiles[4];

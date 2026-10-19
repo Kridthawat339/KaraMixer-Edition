@@ -86,6 +86,7 @@ static QString revText(int v)
 static QColor nameColorFor(InstrumentType t)
 {
     const int i = static_cast<int>(t);
+    if (t == InstrumentType::Canthai) return QColor(0xE8, 0x7A, 0x3A);   // khaen: same family colour as the pipe strip
     if (i <= 4)  return QColor(0xE0, 0xA0, 0x30);   // keys / chromatic / percussive
     if (i == 5)  return QColor(0x8A, 0x6B, 0xE8);   // bass
     if (i <= 12) return QColor(0xE0, 0x5A, 0x9A);   // guitars
@@ -562,7 +563,7 @@ void InstCh::onSliderDoubleClicked()
 void InstCh::contextMenuRequested(const QPoint &pos)
 {
     // right click on the instrument picture = choose its soundfont (strips 1..42 only)
-    if (ui->lbImage->rect().contains(ui->lbImage->mapFromGlobal(QCursor::pos())) && static_cast<int>(instType) < 42) {
+    if (ui->lbImage->rect().contains(ui->lbImage->mapFromGlobal(QCursor::pos())) && (static_cast<int>(instType) < 42 || instType == InstrumentType::Canthai)) {
         emit imageMenuRequested(instType, QCursor::pos());
         return;
     }

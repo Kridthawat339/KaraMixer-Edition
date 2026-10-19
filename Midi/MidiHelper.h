@@ -109,8 +109,17 @@ enum class InstrumentType
     BusGroup13,
     BusGroup14,
     BusGroup15,
-    BusGroup16
+    BusGroup16,
+
+    // Khaen (Thai/Isan mouth organ) strip. Added AFTER the buses on purpose: the saved mixer settings are stored by
+    // the number of the strip, so no existing strip changes its number. Use isBusType() instead of "t >= BusGroup1".
+    Canthai
 };
+
+inline bool isBusType(InstrumentType t)
+{
+    return t >= InstrumentType::BusGroup1 && t <= InstrumentType::BusGroup16;
+}
 
 enum class SpeakerType
 {

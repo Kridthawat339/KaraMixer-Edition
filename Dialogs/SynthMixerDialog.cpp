@@ -1064,7 +1064,7 @@ void SynthMixerDialog::setMute(InstrumentType t, bool m)
 {
     synth->setMute(t, m);
 
-    if (t < InstrumentType::BusGroup1)
+    if (!isBusType(t))
         return;
 
     for (InstrumentType type : synth->instrumentMap().keys()) {
@@ -1079,7 +1079,7 @@ void SynthMixerDialog::setSolo(InstrumentType t, bool s)
 {
     synth->setSolo(t, s);
 
-    if (t < InstrumentType::BusGroup1)
+    if (!isBusType(t))
         return;
 
     for (InstrumentType type : synth->instrumentMap().keys()) {
@@ -1689,6 +1689,9 @@ void SynthMixerDialog::showStripPage(int page)
         if (f)
             f->setVisible(n >= first[page] && n <= last[page]);
     }
+    // strip 63 = Canthai: sits next to the Pipe strip (17-32 page) and shows on the ALL page
+    if (QWidget *f = findChild<QWidget *>(QStringLiteral("frame_63")))
+        f->setVisible(page == 1 || page == 3);
     // the scroll area does not resize its contents (widgetResizable is off): shrink them to the visible strips
     if (ui->scrollAreaWidgetContents->layout())
         ui->scrollAreaWidgetContents->layout()->activate();
@@ -1765,12 +1768,14 @@ void SynthMixerDialog::mapChInstUI()
     chInstMap[InstrumentType::BusGroup14]   = ui->ch_60;
     chInstMap[InstrumentType::BusGroup15]   = ui->ch_61;
     chInstMap[InstrumentType::BusGroup16]   = ui->ch_62;
+
+    chInstMap[InstrumentType::Canthai]      = ui->ch_63;   // khaen strip (drawn after the Pipe strip)
 }
 
 void SynthMixerDialog::setChInstDetails()
 {
-    // 62
-    QString names[62] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
+    // 63 (the last one is the Canthai strip, appended after the buses)
+    QString names[63] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
                         "Bass", "Nylon", "Steel", "Jazz", "Clean",
                         "Overdrv", "Distrn", "Harmncs", "Trumpet", "Brass",
                         "S.Brass", "Saxphn", "Reed", "Pipe", "Strings",
@@ -1784,9 +1789,11 @@ void SynthMixerDialog::setChInstDetails()
                         "Bus 1", "Bus 2", "Bus 3", "Bus 4",
                         "Bus 5", "Bus 6", "Bus 7", "Bus 8",
                         "Bus 9", "Bus 10", "Bus 11", "Bus 12",
-                        "Bus 13", "Bus 14", "Bus 15", "Bus 16" };
+                        "Bus 13", "Bus 14", "Bus 15", "Bus 16",
 
-    QString tooltips[62] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
+                        "Canthai" };
+
+    QString tooltips[63] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
                              "Percussive", "Bass", "Acoustic Guitar (nylon)",
                              "Acoustic Guitar (steel)", "Electric Guitar (jazz)",
                              "Electric Guitar (clean)", "Overdriven Guitar",
@@ -1806,10 +1813,12 @@ void SynthMixerDialog::setChInstDetails()
                              "Bus Group 1", "Bus Group 2", "Bus Group 3", "Bus Group 4",
                              "Bus Group 5", "Bus Group 6", "Bus Group 7", "Bus Group 8",
                              "Bus Group 9", "Bus Group 10", "Bus Group 11", "Bus Group 12",
-                             "Bus Group 13", "Bus Group 14", "Bus Group 15", "Bus Group 16"};
+                             "Bus Group 13", "Bus Group 14", "Bus Group 15", "Bus Group 16",
+
+                             "Canthai (Khaen / แคน)"};
 
     QString rc = ":/Icons/Instruments/";
-    QString imgs[62] = { "Piano.png", "Organ.png", "Accordion.png",
+    QString imgs[63] = { "Piano.png", "Organ.png", "Accordion.png",
                          "Chromatic Percussion.png", "Percussive.png",
                          "Bass.png", "Nylon.png", "Steel.png", "Jazz.png",
                          "Clean.png", "Overdriven.png", "Distortion.png",
@@ -1829,7 +1838,9 @@ void SynthMixerDialog::setChInstDetails()
                          "bs1.png", "bs2.png", "bs3.png", "bs4.png",
                          "bs5.png", "bs6.png", "bs7.png", "bs8.png",
                          "bs9.png", "bs10.png", "bs11.png", "bs12.png",
-                         "bs13.png", "bs14.png", "bs15.png", "bs16.png" };
+                         "bs13.png", "bs14.png", "bs15.png", "bs16.png",
+
+                         "Canthai.png" };
 
 
     for (int i=0; i<synth->HANDLE_STREAM_COUNT; i++)
@@ -1948,7 +1959,7 @@ void SynthMixerDialog::showChannelMenu(InstrumentType type, const QPoint &pos)
     }
 
     // Bus
-    if (static_cast<int>(type) < synth->HANDLE_MIDI_COUNT)
+    if (!isBusType(type))
     {
         menu.addSeparator();
         QMenu *busMenu = menu.addMenu("Bus Group");

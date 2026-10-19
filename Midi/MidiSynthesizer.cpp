@@ -167,6 +167,7 @@ MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)
     for (int i=0; i<16; i++)
     {
         chInstType[i] = InstrumentType::Piano;
+        chProgram[i] = 0;
     }
     chInstType[9] = InstrumentType::PercussionEtc;
 }
@@ -355,8 +356,8 @@ void MidiSynthesizer::close()
     // Clear FX
     for (InstrumentType t : instMap.keys())
     {
-        if (t >= InstrumentType::BusGroup1)
-            break;
+        if (isBusType(t))
+            continue;
 
         for (FX *fx : instMap[t].FXs) {
             fx->setStreamHandle(0);
@@ -369,8 +370,8 @@ void MidiSynthesizer::close()
     // clear handles
     for (InstrumentType t: handles.keys())
     {
-        if (t >= InstrumentType::BusGroup1)
-            break;
+        if (isBusType(t))
+            continue;
 
         HSTREAM h = handles[t];
 
@@ -612,7 +613,7 @@ struct TrimDsp
     std::atomic<float> target{1.0f};    // set from the GUI thread
     float cur = 1.0f;                   // audio thread only
 };
-TrimDsp g_trimDsp[62];                  // one per strip (MIDI / VSTi / bus), index = InstrumentType
+TrimDsp g_trimDsp[63];                  // one per strip (MIDI / VSTi / bus), index = InstrumentType
 
 void CALLBACK trimDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void *user)
 {
@@ -656,7 +657,7 @@ void CALLBACK trimDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void 
 void attachTrimDsp(InstrumentType t, DWORD handle)
 {
     const int i = static_cast<int>(t);
-    if (!handle || i < 0 || i >= 62)
+    if (!handle || i < 0 || i >= 63)
         return;
     g_trimDsp[i].cur = g_trimDsp[i].target.load();         // a new stream starts at the current trim, no glide
     BASS_ChannelSetDSP(handle, trimDspProc, &g_trimDsp[i], -1000);
@@ -853,7 +854,7 @@ void MidiSynthesizer::setLoadAllSoundfont(bool loadAll)
 void MidiSynthesizer::setStripSoundfont(InstrumentType t, const QString &sfPath, bool apply)
 {
     const int key = static_cast<int>(t);
-    if (key < 0 || key >= HANDLE_MIDI_COUNT - 4)
+    if (key < 0 || !isMidiStrip(key))
         return;
 
     if (sfPath.isEmpty())
@@ -961,12 +962,15 @@ void MidiSynthesizer::setSoundfontPresets(int presetIndex)
 
     // set to stream
     const int startDrumType = static_cast<int>(InstrumentType::BassDrum);
-    for (int i=0; i<HANDLE_MIDI_COUNT-4; i++) {
+    for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+        if (!isMidiStrip(i))
+            continue;
         HSTREAM h = handles[static_cast<InstrumentType>(i)];
+        const bool melodic = (i < startDrumType) || i == HANDLE_CANTHAI;
 
         // this strip uses its own soundfont (chosen from the strip's icon menu)
-        const int own = (i < startDrumType) ? sfFiles.indexOf(stripSf.value(i)) : -1;
-        if (bankNo != 0 && i < startDrumType && synth_HSOUNDFONT.count() > 0) {
+        const int own = melodic ? sfFiles.indexOf(stripSf.value(i)) : -1;
+        if (bankNo != 0 && melodic && synth_HSOUNDFONT.count() > 0) {
             std::vector<BASS_MIDI_FONTEX> fx;
             if (own > 0 && own < synth_HSOUNDFONT.count()) {
                 addBank(fx, synth_HSOUNDFONT.at(own), -1);   // the strip's own soundfont first
@@ -1056,10 +1060,25 @@ void MidiSynthesizer::setSoundfontPresets(int presetIndex)
         li++;
     }
 
+    // the preset decides whether program 24 is the accordion or the khaen: re-route the channels now
+    for (int ch = 0; ch < 16; ch++) {
+        if (ch == 9)
+            continue;
+        const InstrumentType nt = melodicTypeFor(ch, chProgram[ch]);
+        if (nt == chInstType[ch])
+            continue;
+        const InstrumentType old = chInstType[ch];
+        chInstType[ch] = nt;
+        if (HSTREAM oh = handles.value(old, 0))                // the old strip must not keep ringing
+            BASS_MIDI_StreamEvent(oh, ch, MIDI_EVENT_NOTESOFF, 0);
+    }
+
     // The channels keep the preset they looked up before the soundfont list changed, so a new
     // bank / drum kit would only be heard after the next program change.  Send each channel's
     // current bank + program again so the change is immediate (also while a song is playing).
-    for (int i = 0; i < HANDLE_MIDI_COUNT - 4; i++) {
+    for (int i = 0; i < HANDLE_STREAM_COUNT; i++) {
+        if (!isMidiStrip(i))
+            continue;
         HSTREAM h = handles[static_cast<InstrumentType>(i)];
         if (!h)
             continue;
@@ -1397,9 +1416,11 @@ void MidiSynthesizer::sendController(int ch, int number, int value)
             return;
         BYTE data[3] = { (0xB0 | ch), (number & 0x7F), (value & 0x7F) };
         //qDebug() << (data[0] & 0xF0) << "  " << (data[0] & 0x0F) << "  " << data[1] << "  " << data[2];
-        for (int i=0; i<HANDLE_MIDI_COUNT; i++) {
+        for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+            if (i >= HANDLE_MIDI_COUNT && i != HANDLE_CANTHAI)
+                continue;
             HSTREAM h = handles[static_cast<InstrumentType>(i)];
-            if (i < HANDLE_VSTI_START)
+            if (i < HANDLE_VSTI_START || i == HANDLE_CANTHAI)
                 BASS_MIDI_StreamEvents(h, BASS_MIDI_EVENTS_RAW, (void*)data, 3);
             #ifndef __linux__
             else
@@ -1422,9 +1443,18 @@ void MidiSynthesizer::sendProgramChange(int ch, int number)
     sendToAllMidiStream(ch, MIDI_EVENT_PROGRAM, number);
 
     if (ch != 9) {
-        InstrumentType t = MidiHelper::getInstrumentType(number);
-        chInstType[ch] = t;
+        chProgram[ch & 15] = number;
+        chInstType[ch] = melodicTypeFor(ch, number);
     }
+}
+
+// Program 24 (index 23, accordion family) is the Thai khaen when the SOUNDFONT preset is 101 / 108 / 110 - it then plays
+// on the Canthai strip; every other preset (and every other program) keeps the normal family strip
+InstrumentType MidiSynthesizer::melodicTypeFor(int ch, int program) const
+{
+    if (program == 23 && ch >= 0 && ch < 16 && isCanthaiBank(sfPresetBankNumber(sfPreset)))
+        return InstrumentType::Canthai;
+    return MidiHelper::getInstrumentType(program);
 }
 
 void MidiSynthesizer::sendChannelAftertouch(int ch, int value)
@@ -1538,7 +1568,7 @@ void MidiSynthesizer::setDevice(InstrumentType t, int device)
     if (device < 0 || device >= audioDevices().count())
         return;
 
-    if (t < InstrumentType::BusGroup1 && instMap[t].bus != -1)
+    if (!isBusType(t) && instMap[t].bus != -1)
         return;
 
     instMap[t].device = device;
@@ -1546,7 +1576,7 @@ void MidiSynthesizer::setDevice(InstrumentType t, int device)
     if (!openned)
         return;
 
-    if (t < InstrumentType::BusGroup1 && instMap[t].bus != -1)
+    if (!isBusType(t) && instMap[t].bus != -1)
         return;
 
     DWORD flag = MidiHelper::getSpeakerFlag(instMap[t].speaker);
@@ -1556,7 +1586,7 @@ void MidiSynthesizer::setDevice(InstrumentType t, int device)
 
 void MidiSynthesizer::setBusGroup(InstrumentType t, int group)
 {
-    if (t >= InstrumentType::BusGroup1)
+    if (isBusType(t))
         return;
 
     instMap[t].bus = group;
@@ -1603,7 +1633,7 @@ void MidiSynthesizer::setTrim(InstrumentType t, double db)
 {
     instMap[t].trimDb = qBound(-12.0, db, 12.0);
     const int i = static_cast<int>(t);
-    if (i >= 0 && i < 62)
+    if (i >= 0 && i < 63)
         g_trimDsp[i].target.store(float(std::pow(10.0, instMap[t].trimDb / 20.0)));   // the strip's DSP glides to it
 }
 
@@ -1730,7 +1760,7 @@ void MidiSynthesizer::setSolo(InstrumentType t, bool s)
 
 void MidiSynthesizer::setUseVSTi(InstrumentType t, int vstiIndex)
 {
-    if (t >= InstrumentType::BusGroup1)
+    if (isBusType(t))
         return;
 
     if (vstiIndex < -1 || vstiIndex > 4)
@@ -1788,7 +1818,7 @@ static void restoreStream(HSTREAM h, const QVector<DWORD> &v)
 
 void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
 {
-    if (t >= InstrumentType::BusGroup1)
+    if (isBusType(t))
         return;
 
     instMap[t].speaker = speaker;
@@ -1805,7 +1835,7 @@ void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
     // The new stream starts with every channel at its defaults (piano, default volume, no reverb ...): that is why
     // the sound used to come out quieter / different until the song was restarted. Keep the old stream's channel
     // state and write it back to the new one.
-    const bool midiStream = static_cast<int>(t) < HANDLE_MIDI_COUNT - HANDLE_VSTI_COUNT;
+    const bool midiStream = isMidiStrip(static_cast<int>(t));
     const QVector<DWORD> chState = midiStream ? snapshotStream(handles[t]) : QVector<DWORD>();
 
     // VSTi: the plug-in's current sound (program / parameters / chunk) is read from the running instance before it is
@@ -1924,9 +1954,11 @@ QList<Chorus2FX *> MidiSynthesizer::chorusFXs()
 
 QVector<DWORD> MidiSynthesizer::snapshotChannels()
 {
-    const int streams = HANDLE_MIDI_COUNT - 4;   // the last four are VSTi streams
+    const int streams = HANDLE_STREAM_COUNT;    // indexed by strip number; the VSTi / bus streams stay empty
     QVector<DWORD> v(streams * 16 * kRestoreCount, DWORD(-1));
     for (int i = 0; i < streams; i++) {
+        if (!isMidiStrip(i))
+            continue;
         HSTREAM h = handles[static_cast<InstrumentType>(i)];
         if (!h)
             continue;
@@ -1939,10 +1971,12 @@ QVector<DWORD> MidiSynthesizer::snapshotChannels()
 
 void MidiSynthesizer::restoreChannels(const QVector<DWORD> &v)
 {
-    const int streams = HANDLE_MIDI_COUNT - 4;
+    const int streams = HANDLE_STREAM_COUNT;
     if (v.size() != streams * 16 * kRestoreCount)
         return;
     for (int i = 0; i < streams; i++) {
+        if (!isMidiStrip(i))
+            continue;
         HSTREAM h = handles[static_cast<InstrumentType>(i)];
         if (!h)
             continue;
@@ -1996,7 +2030,9 @@ void MidiSynthesizer::setSincInterpolation(bool on)
     if (!openned)
         return;
 
-    for (int i=0; i<HANDLE_MIDI_COUNT-4; i++) {   // the last four are VSTi streams
+    for (int i=0; i<HANDLE_STREAM_COUNT; i++) {   // MIDI streams only (not VSTi / bus)
+        if (!isMidiStrip(i))
+            continue;
         HSTREAM h = handles[static_cast<InstrumentType>(i)];
         if (h)
             BASS_ChannelFlags(h, on ? BASS_MIDI_SINCINTER : 0, BASS_MIDI_SINCINTER);
@@ -2011,7 +2047,9 @@ void MidiSynthesizer::setVoices(int n)
     if (!openned)
         return;
 
-    for (int i=0; i<HANDLE_MIDI_COUNT-4; i++) {
+    for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+        if (!isMidiStrip(i))
+            continue;
         HSTREAM h = handles[static_cast<InstrumentType>(i)];
         if (h)
             BASS_ChannelSetAttribute(h, BASS_ATTRIB_MIDI_VOICES, float(n));
@@ -2026,12 +2064,16 @@ void MidiSynthesizer::setUseFXRC(bool use)
     useFX = use;
 
     if (useFX) {
-        for (int i=0; i<HANDLE_MIDI_COUNT; i++) {
+        for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+            if (i >= HANDLE_MIDI_COUNT && i != HANDLE_CANTHAI)
+                continue;
             HSTREAM h = handles[static_cast<InstrumentType>(i)];
             BASS_ChannelFlags(h, 0, BASS_MIDI_NOFX); // remove the flag
         }
     } else {
-        for (int i=0; i<HANDLE_MIDI_COUNT; i++) {
+        for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+            if (i >= HANDLE_MIDI_COUNT && i != HANDLE_CANTHAI)
+                continue;
             HSTREAM h = handles[static_cast<InstrumentType>(i)];
             BASS_ChannelFlags(h, BASS_MIDI_NOFX, BASS_MIDI_NOFX); // set flag
         }
@@ -2412,9 +2454,9 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
 
     DWORD f = useFloat ? BASS_SAMPLE_FLOAT : 0;
 
-    if (index < HANDLE_MIDI_COUNT)  // Midi & VSTi stream
+    if (index < HANDLE_MIDI_COUNT || index == HANDLE_CANTHAI)  // Midi & VSTi stream (+ the Canthai MIDI strip)
     {
-        if (index < HANDLE_MIDI_COUNT-4) // Midi
+        if (isMidiStrip(index)) // Midi
         {
              DWORD flags = f|BASS_STREAM_DECODE|BASS_MIDI_NOSYSRESET;
              if (sincInter) flags = flags|BASS_MIDI_SINCINTER;
@@ -2472,9 +2514,11 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
 void MidiSynthesizer::sendToAllMidiStream(int ch, DWORD eventType, DWORD param)
 {
     trackEvent(ch, eventType, param);
-    for (int i=0; i<HANDLE_MIDI_COUNT; i++) {
+    for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+        if (i >= HANDLE_MIDI_COUNT && i != HANDLE_CANTHAI)
+            continue;                                   // bus streams take no MIDI
         HSTREAM stream = handles[static_cast<InstrumentType>(i)];
-        if (i < HANDLE_VSTI_START)
+        if (i < HANDLE_VSTI_START || i == HANDLE_CANTHAI)
             BASS_MIDI_StreamEvent(stream, ch, eventType, param);
         #ifndef __linux__
         else
@@ -2492,7 +2536,9 @@ void MidiSynthesizer::setSfToStream()
         font.preset = -1;
         font.bank = 0;
 
-        for (int i=0; i<HANDLE_MIDI_COUNT; i++) {
+        for (int i=0; i<HANDLE_STREAM_COUNT; i++) {
+            if (i >= HANDLE_MIDI_COUNT && i != HANDLE_CANTHAI)
+                continue;
             HSTREAM h = handles[static_cast<InstrumentType>(i)];
             BASS_MIDI_StreamSetFonts(h, &font, 1); // set sf stream
         }
@@ -2659,6 +2705,8 @@ MidiOut *MidiSynthesizer::extPort(InstrumentType t)
     if (extOutName.isEmpty())
         return nullptr;
     auto it = extOutName.constFind(t);
+    if (it == extOutName.constEnd() && t == InstrumentType::Canthai)
+        it = extOutName.constFind(InstrumentType::Accordion);   // no port of its own: same as the accordion strip
     if (it == extOutName.constEnd())
         return nullptr;
     return extPorts.value(it.value(), nullptr);

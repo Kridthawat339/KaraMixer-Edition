@@ -143,7 +143,7 @@ void SpeakerDialog::setItems(int row)
     // set device icon, name
     QIcon iconDevice;
     QString nameDevice;
-    if (t < InstrumentType::BusGroup1 && synth->busGroup(t) != -1)
+    if (!isBusType(t) && synth->busGroup(t) != -1)
     {
         auto busType = static_cast<InstrumentType>(synth->busGroup(t) + synth->HANDLE_BUS_START);
         iconDevice.addFile(ICON_MIXER);
@@ -169,7 +169,7 @@ void SpeakerDialog::setItems(int row)
     itemSpeaker->setIcon(iconSpeaker);
     itemSpeaker->setText(nameSpeaker);
 
-    if (t >= InstrumentType::BusGroup1)
+    if (isBusType(t))
         itemSpeaker->setFlags(itemSpeaker->flags() & ~Qt::ItemIsEnabled);
 
     #ifdef __linux__
