@@ -63,10 +63,10 @@
 
 namespace ProLicense {
 
-// the older short licences (HMAC) keep working so existing customers are not locked out; set both to false when
-// every customer has a V3 licence (then a secret inside the program is no longer used at all)
-constexpr bool kAllowMachineLicense = true;
-constexpr bool kAllowOldLicense = true;
+// the older short licences (HMAC, machine or USB) are no longer accepted: only V3 signed licences (KM3-...) unlock PRO.
+// set both back to true only to let old customers in again (needs the secret inside the program)
+constexpr bool kAllowMachineLicense = false;
+constexpr bool kAllowOldLicense = false;
 
 // ---------------- V3: Ed25519 signed licences ----------------
 inline bool havePublicKey()
