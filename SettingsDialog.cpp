@@ -428,7 +428,7 @@ void SettingsDialog::initDeviceTab()
         g->addWidget(cbVoices, 2, 1);
         QComboBox *cbRv = new QComboBox(box);
         cbRv->addItem(QString::fromUtf8("แบบ 1.4.6 (กระชับ)"), false);
-        cbRv->addItem(QString::fromUtf8("แบบ v2 (แรง / หางเสียงยาว)"), true);
+        cbRv->addItem(QString::fromUtf8("แบบ v3 (แรง / หางเสียงยาว)"), true);
         cbRv->setCurrentIndex(synth->isReverbStrong() ? 1 : 0);
         g->addWidget(new QLabel(QString::fromUtf8("ความแรงรีเวิร์บของช่อง :"), box), 3, 0);
         g->addWidget(cbRv, 3, 1);
