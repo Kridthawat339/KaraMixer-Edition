@@ -156,6 +156,8 @@ public:
     void setBusGroup(InstrumentType t, int group);
     void setVolume(InstrumentType t, int volume);
     void setPan(InstrumentType t, int pan);
+    void setReverbStrong(bool strong);               // false = 1.4.6 Final strength (tight), true = v2 stronger / longer tail
+    bool isReverbStrong() const { return reverbStrong; }
     void setReverb(InstrumentType t, int level);   // 0 = dry, 100 = very wet
     double trim(InstrumentType t) { return instMap[t].trimDb; }
     void setTrim(InstrumentType t, double db);     // fine gain per strip, -12..+12 dB in 0.1 dB steps
@@ -318,6 +320,7 @@ private:
     QVector<DWORD> snapshotChannels();
     void restoreChannels(const QVector<DWORD> &state);
     bool sincInter = true;
+    bool reverbStrong = false;
     int maxVoices = 500;
     bool useFX = false;
     QList<FX*> masterFXs;

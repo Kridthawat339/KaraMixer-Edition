@@ -1642,8 +1642,8 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     {
         rv = new Reverb2FX(0, -100);   // lowest priority: after the channel's own FX
         rv->setDryMix(1.0f);
-        rv->setRoomSize(0.8f);
-        rv->setDamp(0.35f);
+        rv->setRoomSize(reverbStrong ? 0.8f : 0.75f);
+        rv->setDamp(reverbStrong ? 0.35f : 0.45f);
         rv->setWidth(1.0f);
         sendRv[t] = rv;
         if (openned)
@@ -1653,10 +1653,27 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     // The knob has to be clearly audible over its whole travel: the free-verb wet level goes up to 3.0
     // (it was capped at 1.6, so even a full knob was faint), and the room grows with the knob.
     const float k = level / 100.0f;
-    rv->setWetMix(3.0f * std::pow(k, 0.85f));
-    rv->setRoomSize(0.7f + 0.25f * k);
+    if (reverbStrong) {
+        rv->setWetMix(3.0f * std::pow(k, 0.85f));
+        rv->setRoomSize(0.7f + 0.25f * k);
+        rv->setDamp(0.35f);
+    } else {                    // 1.4.6 Final: tight and short
+        rv->setWetMix(1.6f * k);
+        rv->setRoomSize(0.75f);
+        rv->setDamp(0.45f);
+    }
     rv->setDryMix(1.0f);
     rv->on();
+}
+
+void MidiSynthesizer::setReverbStrong(bool strong)
+{
+    if (strong == reverbStrong)
+        return;
+    reverbStrong = strong;
+    const QList<InstrumentType> keys = sendRv.keys();
+    for (InstrumentType t : keys)
+        setReverb(t, instMap[t].reverb);        // re-apply every strip with the new strength
 }
 
 int MidiSynthesizer::reverb(InstrumentType t)

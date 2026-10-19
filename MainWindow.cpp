@@ -306,6 +306,7 @@ MainWindow::MainWindow(QWidget *parent) :
             synth->setVoices(pro ? settings->value("SynthVoices", 500).toInt() : 256);
             synth->setSampleRate(pro ? settings->value("SynthSampleRate", 44100).toInt() : 44100);
             synth->setSincInterpolation(pro ? settings->value("SynthSinc", true).toBool() : false);
+            synth->setReverbStrong(settings->value("ReverbStrong", false).toBool());
         }
 
         // floating and fx
@@ -1693,6 +1694,7 @@ void MainWindow::applyConfigLive()
 
         synth->setVoices(pro ? app.value("SynthVoices", 500).toInt() : 256);
         synth->setSincInterpolation(pro ? app.value("SynthSinc", true).toBool() : false);
+        synth->setReverbStrong(app.value("ReverbStrong", false).toBool());
 
         int aout = app.value("SynthDefaultDevice", 1).toInt();
         int asio = app.value("AsioDevice", -1).toInt();

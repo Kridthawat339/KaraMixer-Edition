@@ -425,7 +425,18 @@ void SettingsDialog::initDeviceTab()
         g->addWidget(chSinc, 1, 0, 1, 2);
         g->addWidget(new QLabel(QString::fromUtf8("จำนวนเสียงสูงสุด (Voices) :"), box), 2, 0);
         g->addWidget(cbVoices, 2, 1);
-        g->addWidget(note, 3, 0, 1, 2);
+        QComboBox *cbRv = new QComboBox(box);
+        cbRv->addItem(QString::fromUtf8("แบบ 1.4.6 (กระชับ)"), false);
+        cbRv->addItem(QString::fromUtf8("แบบ v2 (แรง / หางเสียงยาว)"), true);
+        cbRv->setCurrentIndex(synth->isReverbStrong() ? 1 : 0);
+        g->addWidget(new QLabel(QString::fromUtf8("ความแรงรีเวิร์บของช่อง :"), box), 3, 0);
+        g->addWidget(cbRv, 3, 1);
+        connect(cbRv, QOverload<int>::of(&QComboBox::activated), this, [this, cbRv, synth](int i) {
+            const bool strong = cbRv->itemData(i).toBool();
+            synth->setReverbStrong(strong);
+            settings->setValue("ReverbStrong", strong);
+        });
+        g->addWidget(note, 4, 0, 1, 2);
         g->setColumnStretch(1, 1);
         vl->insertWidget(vl->indexOf(ui->groupBox_12) + 1, box);
 
