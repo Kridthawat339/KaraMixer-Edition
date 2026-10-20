@@ -148,7 +148,7 @@ bool AsioOutput::start(unsigned long source, int device)
     {
         BASS_ASIO_INFO ai;
         if (BASS_ASIO_GetInfo(&ai) && ai.outputs < 2) {
-            asioLog("FAIL"); g_error = QString("This ASIO driver has no usable stereo output (%1 output channel(s)). "
+            asioLog(QString("FAIL: driver has %1 output(s), 2 needed").arg(ai.outputs)); g_error = QString("This ASIO driver has no usable stereo output (%1 output channel(s)). "
                               "For ASIO4ALL: open its panel from the tray icon and switch the output device on.").arg(ai.outputs);
             BASS_ASIO_Free();
             return false;
@@ -187,7 +187,7 @@ bool AsioOutput::start(unsigned long source, int device)
     // multi-channel main mixer -> stereo for ASIO outputs 1+2 (split mode: 4..8 channels, nothing is mixed down)
     g_mix = BASS_Mixer_StreamCreate((DWORD)rate, g_splitCh ? (DWORD)g_splitCh : 2, BASS_STREAM_DECODE | BASS_SAMPLE_FLOAT);
     if (!g_mix || !BASS_Mixer_StreamAddChannel(g_mix, (DWORD)source, g_splitCh ? 0 : BASS_MIXER_CHAN_DOWNMIX)) {
-        asioLog("FAIL"); g_error = QString("ASIO mixer failed (error %1)").arg(BASS_ErrorGetCode());
+        asioLog(QString("FAIL: ASIO mixer error %1").arg(BASS_ErrorGetCode())); g_error = QString("ASIO mixer failed (error %1)").arg(BASS_ErrorGetCode());
         if (g_mix) BASS_StreamFree(g_mix);
         g_mix = 0;
         BASS_ASIO_Free();
@@ -233,7 +233,13 @@ bool AsioOutput::start(unsigned long source, int device)
     }
     asioLog(QString("channels: pairMask=0x%1 used=0x%2 multi=%3 buffer=%4").arg(g_pairMask, 0, 16).arg(mask, 0, 16).arg(multi).arg(g_bufLen));
     if (!chOk) {
-        asioLog("FAIL"); g_error = QString("ASIO channel failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
+        {
+            const int ec = BASS_ASIO_ErrorGetCode();
+            BASS_ASIO_INFO ai2; QString nm;
+            if (BASS_ASIO_GetInfo(&ai2)) nm = QString::fromLocal8Bit(ai2.name);
+            asioLog(QString("FAIL: channel setup error %1 (driver: %2)").arg(ec).arg(nm));
+            g_error = QString("ASIO channel failed (error %1)").arg(ec);
+        }
         BASS_StreamFree(g_mix);
         g_mix = 0;
         BASS_ASIO_Free();
@@ -241,7 +247,15 @@ bool AsioOutput::start(unsigned long source, int device)
     }
 
     if (!BASS_ASIO_Start((DWORD)g_bufLen, 0)) {
-        asioLog("FAIL"); g_error = QString("ASIO start failed (error %1)").arg(BASS_ASIO_ErrorGetCode());
+        {
+            const int ec = BASS_ASIO_ErrorGetCode();
+            BASS_ASIO_INFO ai2; QString nm;
+            if (BASS_ASIO_GetInfo(&ai2)) nm = QString::fromLocal8Bit(ai2.name);
+            asioLog(QString("FAIL: start error %1 (driver: %2, buffer %3, rate %4)").arg(ec).arg(nm).arg(g_bufLen).arg(BASS_ASIO_GetRate()));
+            g_error = QString("ASIO start failed (error %1)").arg(ec);
+            g_error += QString::fromUtf8("\nไดรเวอร์นี้เริ่มส่งเสียงไม่ได้ ลองเลือกไดรเวอร์ ASIO อื่น (เช่น FL Studio ASIO หรือ ASIO ของอุปกรณ์เอง) "
+                                         "หรือเปลี่ยน Audio buffer / Sample rate แล้วลองใหม่");
+        }
         BASS_ASIO_Free();
         BASS_StreamFree(g_mix);
         g_mix = 0;
