@@ -1425,7 +1425,10 @@ void SynthMixerDialog::alignMasterMute()
 
         const int tagTop = tag->mapTo(this, QPoint(0, 0)).y();
         const int stripTop = masterStrip->mapTo(this, QPoint(0, 0)).y();
-        masterStrip->placeMute(QRect(3, tagTop - stripTop, masterStrip->width() - 6, tag->height()));
+        {
+            const int mw = qMin(tag->width(), masterStrip->width() - 2);
+            masterStrip->placeMute(QRect((masterStrip->width() - mw) / 2, tagTop - stripTop, mw, tag->height()));   // same size as a strip's name tag
+        }   // same size as a strip's name tag
     }
     busy = false;
 }
@@ -1480,7 +1483,7 @@ void SynthMixerDialog::buildSidePanels()
     // ---- real-time analyzer
     QPushButton *btnRta = new QPushButton(tr("RTA"), left);
     btnRta->setFocusPolicy(Qt::NoFocus);
-    btnRta->setMinimumHeight(26);
+    btnRta->setMinimumHeight(24);
     btnRta->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     btnRta->setToolTip(tr("กราฟความถี่เสียงแบบเรียลไทม์ (Master)"));
     connect(btnRta, &QPushButton::clicked, this, [this]() {
@@ -1499,19 +1502,32 @@ void SynthMixerDialog::buildSidePanels()
     // ---- mixer presets (volume / pan / reverb / mute / solo of every strip + master volume)
     QPushButton *btnPreset = new QPushButton(tr("PRESET"), left);
     btnPreset->setFocusPolicy(Qt::NoFocus);
-    btnPreset->setMinimumHeight(26);
+    btnPreset->setMinimumHeight(24);
     btnPreset->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     btnPreset->setToolTip(tr("บันทึก / เรียกการตั้งค่ามิกเซอร์ทั้งชุด"));
     lv->addWidget(btnPreset);
 
 #ifndef __linux__
-    // ---- YouTube (PRO): browser sound through the mixer (virtual cable) + vocal remover + button that opens YouTube
+    // ---- YouTube (PRO): the button only opens YouTube (and starts the capture quietly); the vocal remover has its own button
     QPushButton *btnYouTube = new QPushButton(tr("YouTube"), left);
     btnYouTube->setFocusPolicy(Qt::NoFocus);
-    btnYouTube->setMinimumHeight(26);
+    btnYouTube->setMinimumHeight(24);
     btnYouTube->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    btnYouTube->setToolTip(tr("PRO: เปิด YouTube ให้เสียงผ่านมิกเซอร์ (มีระบบตัดเสียงร้อง)"));
+    btnYouTube->setToolTip(tr("PRO: เปิด YouTube (เสียงเข้าแทรค YouTube และผ่าน Master)"));
     connect(btnYouTube, &QPushButton::clicked, this, [this]() {
+        if (!ProLicense::ensureUnlocked(this))
+            return;
+        YouTubeBridge::startQuiet(synth);
+        YouTubeBridge::openYouTube();
+    });
+    lv->addWidget(btnYouTube);
+
+    QPushButton *btnVocal = new QPushButton(tr("ตัดเสียงร้อง"), left);
+    btnVocal->setFocusPolicy(Qt::NoFocus);
+    btnVocal->setMinimumHeight(24);
+    btnVocal->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    btnVocal->setToolTip(tr("PRO: ตัดเสียงร้องของ YouTube และตั้งค่าการรับเสียง"));
+    connect(btnVocal, &QPushButton::clicked, this, [this]() {
         if (!ProLicense::ensureUnlocked(this))
             return;
         YouTubeDialog *d = findChild<YouTubeDialog *>(QStringLiteral("youTubeDlg"));
@@ -1522,9 +1538,8 @@ void SynthMixerDialog::buildSidePanels()
         d->show();
         d->raise();
         d->activateWindow();
-        d->launchYouTube();      // starts the capture (when the virtual cable is found) and opens the YouTube page
     });
-    lv->addWidget(btnYouTube);
+    lv->addWidget(btnVocal);
 #endif
 
     // show / hide the Pan and Reverb knobs of all strips (lit = shown)
@@ -1532,7 +1547,7 @@ void SynthMixerDialog::buildSidePanels()
     btnKnobs->setText(tr("PAN / REV"));
     btnKnobs->setCheckable(true);
     btnKnobs->setFocusPolicy(Qt::NoFocus);
-    btnKnobs->setMinimumHeight(26);
+    btnKnobs->setMinimumHeight(24);
     btnKnobs->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     btnKnobs->setToolTip(tr("ซ่อน / แสดงปุ่มหมุน Pan และ Reverb ของทุกช่อง (ซ่อนแล้วมิกเซอร์เตี้ยลง บังหน้าจอคาราโอเกะน้อยลง)"));
     {
@@ -1549,9 +1564,9 @@ void SynthMixerDialog::buildSidePanels()
     lv->addWidget(btnKnobs);
 
     // VST / VSTi management (plug-in folders + scan)
-    QPushButton *btnVst = new QPushButton(tr("จัดการ\nVST / VSTi"), left);
+    QPushButton *btnVst = new QPushButton(tr("VST / VSTi"), left);
     btnVst->setFocusPolicy(Qt::NoFocus);
-    btnVst->setMinimumHeight(38);
+    btnVst->setMinimumHeight(24);
     btnVst->setToolTip(tr("จัดการปลั๊กอิน VST / VSTi (โฟลเดอร์ปลั๊กอินและการสแกน)"));
     connect(btnVst, &QPushButton::clicked, this, [this]() { showVSTDirsDlg(); });
     lv->addWidget(btnVst);

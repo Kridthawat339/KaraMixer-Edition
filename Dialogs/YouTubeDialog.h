@@ -140,6 +140,68 @@ public:
 
     float takePeak() { const float v = peak; peak = 0.0f; return v; }
 
+    // ---- used by the mixer's YouTube button (no window): start the capture quietly and open YouTube
+    static QString findBrowser()
+    {
+        QStringList roots;
+        roots << qEnvironmentVariable("ProgramFiles(x86)") << qEnvironmentVariable("ProgramFiles")
+              << QStringLiteral("C:/Program Files (x86)") << QStringLiteral("C:/Program Files");
+        const QString rel[] = { QStringLiteral("/Microsoft/Edge/Application/msedge.exe"),
+                                QStringLiteral("/Google/Chrome/Application/chrome.exe") };
+        for (const QString &r : rel)
+            for (const QString &root : roots)
+                if (!root.isEmpty() && QFileInfo::exists(root + r))
+                    return QDir::toNativeSeparators(root + r);
+        return QString();
+    }
+
+    // exe empty -> the saved / found browser
+    static void openYouTube(QString exe = QString())
+    {
+        const QUrl url(QStringLiteral("https://www.youtube.com/"));
+        QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+        exe = exe.trimmed();
+        if (exe.isEmpty())
+            exe = s.value("YouTubeBrowser", "").toString();
+        if (exe.isEmpty() || !QFileInfo::exists(exe))
+            exe = findBrowser();
+        if (exe.isEmpty() || !QFileInfo::exists(exe)) {
+            QDesktopServices::openUrl(url);       // no Edge / Chrome found: the default browser (its sound may need routing too)
+            return;
+        }
+        // own profile folder: the login is kept, and this browser window is separate from the everyday one
+        const QString profile = QDir::homePath() + QStringLiteral("/.KaraMixer/youtube-profile");
+        QDir().mkpath(profile);
+        QStringList args;
+        args << QStringLiteral("--app=") + url.toString()
+             << QStringLiteral("--user-data-dir=") + QDir::toNativeSeparators(profile)
+             << QStringLiteral("--window-size=1100,720");
+        QProcess::startDetached(exe, args, QFileInfo(exe).absolutePath());
+        s.setValue("YouTubeBrowser", exe);
+    }
+
+    // starts the capture with the saved input (or the first "CABLE" input) when it is not running; no message boxes
+    static void startQuiet(MidiSynthesizer *syn)
+    {
+        YouTubeBridge &b = get();
+        if (b.running)
+            return;
+        loadVocal(b.vr);
+        QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+        const QString want = st.value("YouTubeInput", "").toString();
+        const QList<Dev> list = b.devices();
+        int pick = -1;
+        for (int i = 0; i < list.count() && pick < 0; i++)
+            if (!want.isEmpty() && list[i].name == want) pick = i;
+        for (int i = 0; i < list.count() && pick < 0; i++)
+            if (list[i].name.contains(QStringLiteral("CABLE"), Qt::CaseInsensitive)) pick = i;
+        if (pick < 0)
+            return;
+        QString err;
+        if (b.start(list[pick].index, list[pick].name, syn, err))
+            st.setValue("YouTubeInput", list[pick].name);
+    }
+
     // start again at program start, when the user asked for it (and PRO is unlocked)
     static void autoStart(MidiSynthesizer *s)
     {
@@ -495,39 +557,9 @@ private:
         refreshState();
     }
 
-    void openBrowser()
-    {
-        const QUrl url(QStringLiteral("https://www.youtube.com/"));
-        const QString exe = edExe->text().trimmed();
-        if (exe.isEmpty() || !QFileInfo::exists(exe)) {
-            QDesktopServices::openUrl(url);       // no Edge / Chrome found: the default browser (its sound may need routing too)
-            return;
-        }
-        // own profile folder: the login is kept, and this browser window is separate from the everyday one
-        const QString profile = QDir::homePath() + QStringLiteral("/.KaraMixer/youtube-profile");
-        QDir().mkpath(profile);
-        QStringList args;
-        args << QStringLiteral("--app=") + url.toString()
-             << QStringLiteral("--user-data-dir=") + QDir::toNativeSeparators(profile)
-             << QStringLiteral("--window-size=1100,720");
-        QProcess::startDetached(exe, args, QFileInfo(exe).absolutePath());
-        QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-        s.setValue("YouTubeBrowser", exe);
-    }
+    void openBrowser() { YouTubeBridge::openYouTube(edExe->text()); }
 
-    static QString findBrowser()
-    {
-        QStringList roots;
-        roots << qEnvironmentVariable("ProgramFiles(x86)") << qEnvironmentVariable("ProgramFiles")
-              << QStringLiteral("C:/Program Files (x86)") << QStringLiteral("C:/Program Files");
-        const QString rel[] = { QStringLiteral("/Microsoft/Edge/Application/msedge.exe"),
-                                QStringLiteral("/Google/Chrome/Application/chrome.exe") };
-        for (const QString &r : rel)
-            for (const QString &root : roots)
-                if (!root.isEmpty() && QFileInfo::exists(root + r))
-                    return QDir::toNativeSeparators(root + r);
-        return QString();
-    }
+    static QString findBrowser() { return YouTubeBridge::findBrowser(); }
 
     MidiSynthesizer *synth;
     QComboBox *cbInput = nullptr;

@@ -7,7 +7,7 @@
 //   M = L + R (what both channels share = centre: lead vocal, but also kick / snare / bass)
 //   S = L - R (what differs = stereo instruments, reverb, backing instruments)
 //   m = |L-R|^2 / (|L|^2 + |R|^2), clamped to 0..1   0 = pure centre, 1 = one side only (or out of phase)
-//   gain = 1 - strength * band(f) * (1 - m^sharp)      -> bins that sit in the centre are turned down,
+//   gain = 1 - strength * band(f) * (1 - smoothstep(m, 0, m1))      -> bins that sit in the centre are turned down,
 //   bins that are wide (guitars, keys, strings, cymbals, room) are left alone
 //   band(f): 1 inside [keepLow .. keepHigh], fading to 0 outside it, so the bass / kick (below keepLow)
 //   and the air / cymbals (above keepHigh) are not touched.
@@ -68,6 +68,7 @@ public:
         inL.assign(0, 0.0f); inR.assign(0, 0.0f);
         accL.assign(N, 0.0f); accR.assign(N, 0.0f);
         gainPrev.assign(BINS, 1.0f);
+        pLL.assign(BINS, 0.0f); pRR.assign(BINS, 0.0f); pLR.assign(BINS, std::complex<float>(0.0f, 0.0f));
         primed = false;
     }
 
@@ -125,7 +126,7 @@ private:
     void doFrame()
     {
         const float s = strength.load() / 100.0f;
-        const float sharpExp = 0.6f + 2.4f * (sharp.load() / 100.0f);       // 0.6 .. 3.0
+        const float m1 = 0.25f + 0.55f * (sharp.load() / 100.0f);          // width of what counts as "centre": 0.25 .. 0.80
         const float lo = (float)lowHz.load(), hi = (float)highHz.load();
         const float binHz = (float)rate.load() / N;
 
@@ -151,14 +152,22 @@ private:
             const cf sum = L[k] + R[k], dif = L[k] - R[k];
             const float ps = std::norm(sum), pd = std::norm(dif);
             (void)ps;
-            const float m = (std::min)(1.0f, pd / (std::norm(L[k]) + std::norm(R[k]) + 1e-12f));   // 0 = same in both channels (centre) .. 1 = one side only / opposite phase
+            // statistics over time (about 100 ms): a bin of a steady centred voice keeps the same level and phase in both
+            // channels from frame to frame; a bin with a guitar / reverb on top does not. One single frame is too noisy for that.
+            const float alpha = 0.82f;
+            pLL[k] = alpha * pLL[k] + (1.0f - alpha) * std::norm(L[k]);
+            pRR[k] = alpha * pRR[k] + (1.0f - alpha) * std::norm(R[k]);
+            pLR[k] = alpha * pLR[k] + (1.0f - alpha) * (L[k] * std::conj(R[k]));
+            const float pdiff = pLL[k] + pRR[k] - 2.0f * pLR[k].real();
+            const float m = (std::min)(1.0f, (std::max)(0.0f, pdiff / (pLL[k] + pRR[k] + 1e-12f)));   // 0 = same in both channels (centre) .. 1 = one side only / opposite phase
             const float f = k * binHz;
             const float band = smooth(f, lo * 0.7f, lo * 1.3f) * (1.0f - smooth(f, hi * 0.8f, hi * 1.2f));
             const int a0 = (std::max)(0, k - 7), a1 = (std::min)(BINS - 1, k + 7);
             const float localMean = (pre[a1 + 1] - pre[a0]) / float(a1 - a0 + 1);
             const float peaky = smooth(cmag[k] / (localMean + 1e-9f), 1.0f, 2.2f);
             const float tonalW = (1.0f - drumAmt) + drumAmt * peaky;
-            float target = 1.0f - s * band * tonalW * (1.0f - std::pow(m, sharpExp));
+            const float cut = 1.0f - smooth(m, 0.0f, m1);        // 1 for the centre, falling to 0 at m1 (more stereo than that is left alone)
+            float target = 1.0f - s * band * tonalW * cut;
             if (target < 0.0f) target = 0.0f;
             g[k] = target;
         }
@@ -203,7 +212,8 @@ private:
     std::vector<float> win;
     std::vector<std::complex<float>> tw;
     std::vector<int> rev;
-    std::vector<float> inL, inR, accL, accR, gainPrev;
+    std::vector<float> inL, inR, accL, accR, gainPrev, pLL, pRR;
+    std::vector<std::complex<float>> pLR;
     bool primed = false;
     std::atomic<bool> enabledFlag{false};
     std::atomic<int> strength{100}, sharp{60}, lowHz{160}, highHz{12000}, drums{60}, rate{48000};

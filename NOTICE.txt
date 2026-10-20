@@ -24,8 +24,8 @@ KaraMixer Edition - NOTICE / ประกาศลิขสิทธิ์แล
    ซอร์สโค้ดเต็มของเวอร์ชันที่คุณได้รับ ขอรับได้ตามที่ติดต่อด้านล่าง
    (ไม่คิดค่าซอร์สโค้ด คิดเฉพาะค่าจัดส่งหากมี):
 
-   Source / ซอร์ส : <SOURCE_URL>
-   Contact / ติดต่อ: <CONTACT>
+   Source / ซอร์ส : https://github.com/Kridthawat339/KaraMixer-Edition
+   Contact / ติดต่อ: Buaimusic@gmail.com
 
    KaraMixer Edition is distributed free of charge. Optional PRO functions are
    unlocked with a licence key that can be purchased from the author. The key
