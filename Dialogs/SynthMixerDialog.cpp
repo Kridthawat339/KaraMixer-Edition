@@ -496,7 +496,7 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
             st.setArrayIndex(static_cast<int>(t));
             int dv = st.value("Device", 0).toInt();
             int  b = st.value("Bus", -1).toInt();
-            int ml = st.value("Volume", t == InstrumentType::WeSing ? 100 : 50).toInt();
+            int ml = st.value("Volume", 50).toInt();
             int pn = st.value("Pan", 0).toInt();
             int rv = st.value("Reverb", 0).toInt();
             double tr = st.value("Trim", 0.0).toDouble();
@@ -803,7 +803,7 @@ void SynthMixerDialog::reloadFromSettings()
         st.setArrayIndex(static_cast<int>(t));
         const int dv = st.value("Device", 0).toInt();
         const int b = st.value("Bus", -1).toInt();
-        const int ml = st.value("Volume", t == InstrumentType::WeSing ? 100 : 50).toInt();
+        const int ml = st.value("Volume", 50).toInt();
         const int pn = st.value("Pan", 0).toInt();
         const int rv = st.value("Reverb", 0).toInt();
         const double tr = st.value("Trim", 0.0).toDouble();

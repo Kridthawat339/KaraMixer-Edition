@@ -158,7 +158,6 @@ MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)
         im.vsti = -1;
         im.device = 0;
         im.speaker = SpeakerType::Default;
-        if (i == HANDLE_WESING) im.volume = 100;
 
         instMap[t] = im;
 
