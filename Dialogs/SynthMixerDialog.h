@@ -98,6 +98,9 @@ protected:
     bool alignPending = false;
     int alignTries = 0;
     qint64 alignStamp = 0;
+    QTimer *alignWatch = nullptr;   // slow watchdog: re-aligns when something moved the master frame off the strip line
+    int watchFails = 0;
+    void logLayout(const QString &why);
     QRect hideSavedGeo;
     QRect hideNarrowGeo;   // the window right after it was made narrow: moving it meanwhile moves the restore too
     int hideSavedMinW = 0;

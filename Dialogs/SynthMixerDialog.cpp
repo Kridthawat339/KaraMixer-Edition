@@ -6,6 +6,9 @@
 #include <QMenu>
 #include <QFileInfo>
 #include <QTimer>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
 #include <QDateTime>
 #include <QVariantAnimation>
 #include <QEasingCurve>
@@ -1539,6 +1542,29 @@ bool SynthMixerDialog::event(QEvent *e)
     return r;
 }
 
+// ~/.KaraMixer/layout.log : numbers of the master / strip geometry when a correction was needed (for support)
+void SynthMixerDialog::logLayout(const QString &why)
+{
+    if (!masterStrip || !ui->scrollArea)
+        return;
+    QDir().mkpath(QDir::homePath() + QStringLiteral("/.KaraMixer"));
+    QFile f(QDir::homePath() + QStringLiteral("/.KaraMixer/layout.log"));
+    if (f.size() > 64 * 1024)
+        f.remove();
+    if (!f.open(QIODevice::Append | QIODevice::Text))
+        return;
+    QWidget *bar = ui->scrollArea;
+    const int barBot = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
+    const int mTop = masterStrip->mapTo(this, QPoint(0, 0)).y();
+    QTextStream t(&f);
+    t.setCodec("UTF-8");
+    t << QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz")) << "  " << why
+      << "  win=" << width() << "x" << height() << " barBot=" << barBot << " masterTop=" << mTop
+      << " masterH=" << masterStrip->height() << " min=" << masterStrip->minimumHeight() << " max=" << masterStrip->maximumHeight()
+      << " rightMargin=" << (masterStrip->parentWidget() && masterStrip->parentWidget()->layout() ? masterStrip->parentWidget()->layout()->contentsMargins().bottom() : -1)
+      << " knobDrop=" << knobDrop << " winDrop=" << winDrop << "\n";
+}
+
 void SynthMixerDialog::scheduleAlign()
 {
     if (alignPending || stripsHidden || !masterStrip)
@@ -1563,8 +1589,38 @@ void SynthMixerDialog::scheduleAlign()
         if (alignTries >= 4)
             return;
         alignTries++;
+        logLayout(QStringLiteral("event-fix"));
         alignMasterMute();
+        logLayout(QStringLiteral("  after"));
     });
+
+    if (!alignWatch) {
+        alignWatch = new QTimer(this);
+        alignWatch->setInterval(400);
+        connect(alignWatch, &QTimer::timeout, this, [this]() {
+            if (!isVisible() || stripsHidden || !masterStrip || !ui->scrollArea->isVisible())
+                return;
+            QWidget *bar = ui->scrollArea;
+            const int stripBot  = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
+            const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
+            if (qAbs(stripBot - masterBot) <= 1) {
+                watchFails = 0;
+                alignWatch->setInterval(400);
+                return;
+            }
+            logLayout(QStringLiteral("watchdog-fix"));
+            alignMasterMute();
+            logLayout(QStringLiteral("  after"));
+            const int nowBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
+            if (qAbs(stripBot - nowBot) > 1) {
+                if (++watchFails >= 5)
+                    alignWatch->setInterval(5000);   // cannot be fixed: do not keep poking it
+            } else {
+                watchFails = 0;
+            }
+        });
+        alignWatch->start();
+    }
 }
 
 void SynthMixerDialog::hideEvent(QHideEvent *event)
