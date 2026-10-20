@@ -1365,6 +1365,15 @@ void SynthMixerDialog::applyKnobProgress(double p)
     update();
 }
 
+int SynthMixerDialog::masterWantHeight() const
+{
+    if (!masterStrip || !ui->scrollArea || !ui->scrollArea->isVisible())
+        return -1;
+    const QWidget *bar = ui->scrollArea;
+    const int top = masterStrip->mapTo(const_cast<SynthMixerDialog *>(this), QPoint(0, 0)).y();
+    return bar->mapTo(const_cast<SynthMixerDialog *>(this), QPoint(0, 0)).y() + bar->height() - top;
+}
+
 // Put the master strip's bottom edge on the strips' bottom edge, and the MUTE button exactly on the name-tag row
 // (same top, same height) whatever the font / DPI of this PC. MUTE is placed by absolute position, so it can
 // never drift away from the tags.
@@ -1384,30 +1393,13 @@ void SynthMixerDialog::alignMasterMute()
         QWidget *frame = ref->parentWidget() ? ref->parentWidget() : ref; (void)frame;
         QLayout *rl = masterStrip->parentWidget()->layout();
 
-        QWidget *bar = ui->scrollArea;   // the master frame reaches down to the bottom of the strip area (incl. the scroll bar)
-        masterStrip->setMaximumHeight(QWIDGETSIZE_MAX);   // measure from a free height every time
-        for (int pass = 0; pass < 3; pass++) {
+        // The master frame ends exactly on the strip area's bottom line (scroll bar line): one calculated height,
+        // applied once - no iteration, nothing that can fight with another correction (that made it flicker).
+        {
+            rl->setContentsMargins(0, 0, 0, 0);
             layout()->activate();
-            const int stripBot = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
-            const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
-            const int d = stripBot - masterBot;   // > 0: the master frame ends above the strips' frame
-            if (d >= -1 && d <= 1)
-                break;
-            // Stop as soon as the margin can't change any more (it is clamped to 0..24). Without this the
-            // master strip, when its content is taller than the strips, was re-sized by every pass, each
-            // resize queued another pass, and the whole master column flickered non-stop.
-            QMargins m = rl->contentsMargins();
-            const int nb = qBound(0, m.bottom() - d, 400);   // no small cap: a taller left panel / font must not leave the frame short
-            if (nb == m.bottom())
-                break;
-            rl->setContentsMargins(m.left(), m.top(), m.right(), nb);
-        }
-        layout()->activate();
-        {   // hard stop: the master frame never reaches below the strip area's bottom edge (scroll bar line),
-            // whatever the left panel / font / DPI make the row height
-            const int top = masterStrip->mapTo(this, QPoint(0, 0)).y();
-            const int want = bar->mapTo(this, QPoint(0, 0)).y() + bar->height() - top;
-            if (want > 150 && want < masterStrip->height()) {
+            const int want = masterWantHeight();
+            if (want > 150 && masterStrip->maximumHeight() != want) {
                 // the contents are placed by position, so the strip may be shorter than its nominal minimum
                 masterStrip->setMinimumHeight(qMin(masterStrip->minimumHeight(), want));
                 masterStrip->setMaximumHeight(want);
@@ -1574,10 +1566,8 @@ void SynthMixerDialog::scheduleAlign()
         alignPending = false;
         if (!isVisible() || stripsHidden || !masterStrip || !ui->scrollArea->isVisible())
             return;
-        QWidget *bar = ui->scrollArea;
-        const int stripBot  = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
-        const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
-        if (qAbs(stripBot - masterBot) <= 1) {
+        const int want = masterWantHeight();
+        if (want <= 150 || masterStrip->maximumHeight() == want) {   // already set to the right height
             alignTries = 0;
             return;
         }
@@ -1600,10 +1590,8 @@ void SynthMixerDialog::scheduleAlign()
         connect(alignWatch, &QTimer::timeout, this, [this]() {
             if (!isVisible() || stripsHidden || !masterStrip || !ui->scrollArea->isVisible())
                 return;
-            QWidget *bar = ui->scrollArea;
-            const int stripBot  = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
-            const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
-            if (qAbs(stripBot - masterBot) <= 1) {
+            const int want0 = masterWantHeight();
+            if (want0 <= 150 || masterStrip->maximumHeight() == want0) {
                 watchFails = 0;
                 alignWatch->setInterval(400);
                 return;
@@ -1611,8 +1599,7 @@ void SynthMixerDialog::scheduleAlign()
             logLayout(QStringLiteral("watchdog-fix"));
             alignMasterMute();
             logLayout(QStringLiteral("  after"));
-            const int nowBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
-            if (qAbs(stripBot - nowBot) > 1) {
+            if (masterStrip->maximumHeight() != masterWantHeight()) {
                 if (++watchFails >= 5)
                     alignWatch->setInterval(5000);   // cannot be fixed: do not keep poking it
             } else {
