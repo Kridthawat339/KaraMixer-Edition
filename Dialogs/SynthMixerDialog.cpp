@@ -1213,18 +1213,25 @@ void SynthMixerDialog::syncQuickChecks()
 
 void SynthMixerDialog::showEvent(QShowEvent *)
 {
-    fitToContent();
-    if (foldAtShow) {   // saved as folded: start from the measured full-height layout, then fold it
-        foldAtShow = false;
-        setKnobsVisible(false, false);
+    // Coming back from the karaoke auto-hide the window is exactly as it was left: re-fitting and re-aligning it
+    // on every return made it lag and slowly pushed the frames out of place. Only a real first show does that.
+    const bool quick = property("kmAutoRestore").toBool() && fittedOnce;
+    setProperty("kmAutoRestore", false);
+    if (!quick) {
+        fitToContent();
+        fittedOnce = true;
+        if (foldAtShow) {   // saved as folded: start from the measured full-height layout, then fold it
+            foldAtShow = false;
+            setKnobsVisible(false, false);
+        }
+        QTimer::singleShot(0, this, [this]() { alignMasterMute(); });   // after the layout has settled
+        QTimer::singleShot(150, this, [this]() { alignMasterMute(); }); // and once more when everything is final
     }
-    QTimer::singleShot(0, this, [this]() { alignMasterMute(); });   // after the layout has settled
-    QTimer::singleShot(150, this, [this]() { alignMasterMute(); }); // and once more when everything is final
     if (FrameOverlay *fo = findChild<FrameOverlay *>())   // keep the corner overlay above every strip
         fo->raise();
     syncQuickChecks();
     connect(synth, SIGNAL(noteOnSended(InstrumentType,int,int,int,int)),
-            this, SLOT(showPeakVU(InstrumentType,int,int,int,int)));
+            this, SLOT(showPeakVU(InstrumentType,int,int,int,int)), Qt::UniqueConnection);
 }
 
 // Fit the window to its content: strip areas as tall as their strips, window as tall as the layout.
@@ -1382,7 +1389,7 @@ void SynthMixerDialog::alignMasterMute()
             // master strip, when its content is taller than the strips, was re-sized by every pass, each
             // resize queued another pass, and the whole master column flickered non-stop.
             QMargins m = rl->contentsMargins();
-            const int nb = qBound(0, m.bottom() - d, 24);
+            const int nb = qBound(0, m.bottom() - d, 400);   // no small cap: a taller left panel / font must not leave the frame short
             if (nb == m.bottom())
                 break;
             rl->setContentsMargins(m.left(), m.top(), m.right(), nb);

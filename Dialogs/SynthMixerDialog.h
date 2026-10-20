@@ -91,6 +91,7 @@ protected:
     int knobDrop = 0;             // pixels taken away from the strips so far
     void alignMasterMute();
     void hideEvent(QHideEvent *event);
+    bool fittedOnce = false;   // first show fits the window; auto-hide returns do not
     void closeEvent(QCloseEvent *event);
     void paintEvent(QPaintEvent *event);
     void changeEvent(QEvent *event) override;

@@ -18,6 +18,10 @@
 #include <QStringList>
 #include <QFileInfo>
 #include <QElapsedTimer>
+#include <QDir>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
 
 #ifdef _WIN32
   #ifndef NOMINMAX
@@ -66,33 +70,55 @@ private:
     bool hiddenByUs = false;
     int delayMs = 3000;
     QStringList names;
+    mutable DWORD cachePid = 0;
+    mutable QString cacheExe;
     QElapsedTimer awayClock;     // how long the karaoke program has not been in front
     bool awayRunning = false;
     QElapsedTimer lastAct;       // last click / key press in the karaoke program
     bool haveAct = false;
+
+    // small diagnostic log (only state changes): ~/.KaraMixer/autohide.log - kept short
+    void log(const QString &msg) const
+    {
+        QDir().mkpath(QDir::homePath() + QStringLiteral("/.KaraMixer"));
+        QFile f(QDir::homePath() + QStringLiteral("/.KaraMixer/autohide.log"));
+        if (f.size() > 64 * 1024)
+            f.remove();
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            QTextStream t(&f);
+            t.setCodec("UTF-8");
+            t << QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz")) << "  " << msg << "\n";
+        }
+    }
 
     void restore()
     {
         awayRunning = false;
         if (hiddenByUs && mixer) {
             hiddenByUs = false;
+            log(QStringLiteral("restore: mixer shown again"));
+            mixer->setProperty("kmAutoRestore", true);   // window is unchanged: skip the heavy re-fit
             mixer->setAttribute(Qt::WA_ShowWithoutActivating, true);
             mixer->show();
         }
     }
 
 #ifdef _WIN32
-    static QString exeNameOf(DWORD pid)
+    QString exeNameOf(DWORD pid) const
     {
+        if (pid == cachePid && !cacheExe.isEmpty())
+            return cacheExe;
         QString res;
         HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if (h) {
             wchar_t buf[MAX_PATH * 2];
             DWORD n = DWORD(sizeof(buf) / sizeof(buf[0]));
             if (QueryFullProcessImageNameW(h, 0, buf, &n))
-                res = QFileInfo(QString::fromWCharArray(buf, int(n))).fileName();
+                res = QString::fromWCharArray(buf, int(n)).replace('\\', '/');   // full path
             CloseHandle(h);
         }
+        cachePid = pid;
+        cacheExe = res;
         return res;
     }
 
@@ -122,6 +148,18 @@ private:
             if ((!exe.isEmpty() && exe.contains(n)) || t.contains(n))
                 return true;
         return false;
+    }
+
+    QString frontInfo() const
+    {
+        HWND fg = GetForegroundWindow();
+        DWORD pid = 0;
+        if (fg)
+            GetWindowThreadProcessId(fg, &pid);
+        wchar_t title[128] = {0};
+        if (fg)
+            GetWindowTextW(fg, title, 127);
+        return exeNameOf(pid) + QStringLiteral(" | ") + QString::fromWCharArray(title);
     }
 
     void tick()
@@ -158,6 +196,7 @@ private:
             haveAct = true;
             if (!hiddenByUs && mixer->isVisible()) {
                 hiddenByUs = true;
+                log(QStringLiteral("hide: activity in the front program (%1)").arg(frontInfo()));
                 mixer->hide();
             }
         } else if (hiddenByUs && (!haveAct || lastAct.elapsed() >= delayMs)) {
