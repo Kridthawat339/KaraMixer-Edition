@@ -1487,13 +1487,17 @@ void SynthMixerDialog::setStripsHidden(bool hide)
         const int w = qMax(layout()->minimumSize().width(), 260);
         const QRect g = hideSavedGeo;
         setGeometry(g.right() + 1 - w, g.y(), w, g.height());
+        hideNarrowGeo = geometry();   // the real one: the window may refuse to get as narrow as asked
     } else {
         for (QWidget *w : ws)
             if (w) w->show();
         setMinimumWidth(hideSavedMinW);
+        // back to the old place and size (shifted by however far the window was dragged while it was narrow)
         const QRect g = geometry();
         const int w = hideSavedGeo.width() > 0 ? hideSavedGeo.width() : 970;
-        setGeometry(g.right() + 1 - w, g.y(), w, g.height());
+        const int dx = hideNarrowGeo.isValid() ? g.x() - hideNarrowGeo.x() : 0;
+        const int dy = hideNarrowGeo.isValid() ? g.y() - hideNarrowGeo.y() : 0;
+        setGeometry(hideSavedGeo.x() + dx, hideSavedGeo.y() + dy, w, g.height());
         layout()->activate();
         QTimer::singleShot(0, this, [this]() { alignMasterMute(); });
         QTimer::singleShot(150, this, [this]() { alignMasterMute(); });

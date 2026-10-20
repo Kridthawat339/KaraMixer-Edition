@@ -94,6 +94,7 @@ protected:
     void setStripsHidden(bool hide);   // master-only view (HIDE button on the master strip)
     bool stripsHidden = false;
     QRect hideSavedGeo;
+    QRect hideNarrowGeo;   // the window right after it was made narrow: moving it meanwhile moves the restore too
     int hideSavedMinW = 0;
     bool fittedOnce = false;   // first show fits the window; auto-hide returns do not
     void closeEvent(QCloseEvent *event);
