@@ -87,8 +87,8 @@ public:
         YouTubeRing::get().clear();
         peak = 0.0f;
 
-        // 10 ms capture period keeps the extra delay small
-        rec = BASS_RecordStart(kRate, 2, MAKELONG(BASS_SAMPLE_FLOAT, 10), &YouTubeBridge::recProc, this);
+        // 20 ms capture period: steady, small extra delay
+        rec = BASS_RecordStart(kRate, 2, MAKELONG(BASS_SAMPLE_FLOAT, 20), &YouTubeBridge::recProc, this);
         if (!rec) {
             err = QStringLiteral("BASS_RecordStart error %1").arg(BASS_ErrorGetCode());
             BASS_RecordFree();

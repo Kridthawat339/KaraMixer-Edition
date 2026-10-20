@@ -272,16 +272,13 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
     {
         QTimer *ytMeter = new QTimer(this);
         connect(ytMeter, &QTimer::timeout, this, [this]() {
-            // level of the strip's own stream as the mixer reads it (after the strip fader / mute / solo)
-            const DWORD h = synth->getChannelHandle(InstrumentType::YouTube);
-            if (!h)
+            // level of the captured audio, scaled by the strip fader (reading the stream itself would take samples away from the mixer)
+            YouTubeBridge &yb = YouTubeBridge::get();
+            if (!yb.active())
                 return;
-            DWORD lv = BASS_Mixer_ChannelGetLevel(h);
-            if (lv == DWORD(-1))
-                lv = BASS_ChannelGetLevel(h);
-            if (lv == DWORD(-1))
-                return;
-            const float p = float(qMax<int>(LOWORD(lv), HIWORD(lv))) / 32768.0f;
+            const Instrument im = synth->instrument(InstrumentType::YouTube);
+            const float gain = im.enable ? FaderTaper::gain(im.volume) : 0.0f;
+            const float p = yb.takeStripPeak() * gain;
             if (p < 0.001f)
                 return;
             const int v = qBound(0, int((20.0 * std::log10(double(p)) + 60.0) / 60.0 * 127.0 + 0.5), 127);
