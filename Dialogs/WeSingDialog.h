@@ -62,7 +62,7 @@ public:
         return out;
     }
 
-    bool active() const { return push.load() != 0; }
+    bool active() const { return running; }
     QString deviceName() const { return devName; }
 
     bool start(int dev, const QString &name, MidiSynthesizer *s, QString &err)
@@ -77,13 +77,9 @@ public:
         recDevice = dev;
         BASS_RecordSetDevice((DWORD)dev);
 
-        DWORD p = BASS_StreamCreate(kRate, 2, BASS_STREAM_DECODE | BASS_SAMPLE_FLOAT, STREAMPROC_PUSH, nullptr);
-        if (!p) {
-            err = QStringLiteral("BASS_StreamCreate error %1").arg(BASS_ErrorGetCode());
-            BASS_RecordFree();
-            return false;
-        }
-        applyVolume(p);
+        // the WeSing strip of the mixer owns the push stream (fader / mute / solo / Master are the strip's)
+        // (0 while the audio output is still opening: the timer below picks the handle up)
+        const DWORD p = synth ? synth->getChannelHandle(InstrumentType::WeSing) : 0;
         peak = 0.0f;
         push = p;
 
@@ -92,11 +88,11 @@ public:
         if (!rec) {
             err = QStringLiteral("BASS_RecordStart error %1").arg(BASS_ErrorGetCode());
             push = 0;
-            BASS_StreamFree(p);
             BASS_RecordFree();
             return false;
         }
         devName = name;
+        running = true;
 
         attach();
         if (!timer) {
@@ -110,25 +106,19 @@ public:
     void stop()
     {
         if (timer) timer->stop();
+        running = false;
         const DWORD p = push.exchange(0);
         const DWORD r = rec;
         rec = 0;
         if (r) BASS_ChannelStop(r);
-        if (p) {
-            BASS_Mixer_ChannelRemove(p);
-            BASS_StreamFree(p);
-        }
+        if (p)
+            BASS_ChannelSetPosition(p, 0, BASS_POS_BYTE);   // drop what is still buffered; the stream itself stays with the strip
         if (r || p) {
             BASS_RecordSetDevice((DWORD)recDevice);
             BASS_RecordFree();
         }
         peak = 0.0f;
     }
-
-    void setVolume(int percent) { vol = percent; applyVolume(push.load()); }
-    void setMuted(bool m) { muted = m; applyVolume(push.load()); }
-    int volume() const { return vol; }
-    bool isMuted() const { return muted; }
 
     float takePeak() { const float v = peak; peak = 0.0f; return v; }
 
@@ -144,8 +134,6 @@ public:
         if (want.isEmpty())
             return;
         WeSingBridge &b = get();
-        b.vol = st.value("WeSingVolume", 100).toInt();
-        b.muted = st.value("WeSingMute", false).toBool();
         for (const Dev &d : b.devices())
             if (d.name == want) {
                 QString err;
@@ -191,34 +179,23 @@ private:
         return TRUE;
     }
 
-    void applyVolume(DWORD p)
-    {
-        if (p)
-            BASS_ChannelSetAttribute(p, BASS_ATTRIB_VOL, muted ? 0.0f : vol / 100.0f);
-    }
-
     void attach()
     {
-        const DWORD p = push.load();
-        if (!p || !synth)
+        if (!running || !synth)
             return;
-        const DWORD m = synth->mainMixerHandle();
-        if (!m)
-            return;
-        if (BASS_Mixer_ChannelGetMixer(p) == m)
-            return;
-        BASS_Mixer_ChannelRemove(p);
-        BASS_Mixer_StreamAddChannel(m, p, BASS_MIXER_CHAN_NORAMPIN);
+        // the strip's stream is created again whenever the audio output is re-opened: follow it
+        const DWORD h = synth->getChannelHandle(InstrumentType::WeSing);
+        if (h && h != push.load())
+            push = h;
     }
 
     std::atomic<DWORD> push{0};
+    bool running = false;
     DWORD rec = 0;
     int recDevice = -1;
     MidiSynthesizer *synth = nullptr;
     QTimer *timer = nullptr;
     QString devName;
-    int vol = 100;
-    bool muted = false;
     std::atomic<float> peak{0.0f};
 };
 
@@ -235,11 +212,6 @@ public:
         setAttribute(Qt::WA_DeleteOnClose);
 
         QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-        WeSingBridge &br = WeSingBridge::get();
-        if (!br.active()) {       // while it is running the bridge keeps its own values
-            br.setVolume(st.value("WeSingVolume", 100).toInt());
-            br.setMuted(st.value("WeSingMute", false).toBool());
-        }
 
         QVBoxLayout *v = new QVBoxLayout(this);
         v->setSpacing(8);
@@ -249,7 +221,7 @@ public:
             "1) ติดตั้งสายเสียงเสมือน (เช่น VB-Cable) และโปรแกรมจำลอง Android (เช่น BlueStacks) แล้วติดตั้งแอป WeSing ในโปรแกรมจำลอง<br>"
             "2) ตั้งให้เสียงของโปรแกรมจำลองออกที่ <b>CABLE Input</b> (กดปุ่ม \"ตั้งค่าเสียงของ Windows\" ด้านล่าง)<br>"
             "3) เลือกอินพุต <b>CABLE Output</b> ในช่องด้านล่าง แล้วกด \"เริ่มรับเสียง\"<br>"
-            "4) กด \"เปิด WeSing\" แล้วร้องได้เลย เสียงของแอปจะผ่านมิกเซอร์ของ KaraMixer"), this);
+            "4) กด \"เปิด WeSing\" แล้วร้องได้เลย เสียงของแอปจะเข้าแทรค WeSing ในมิกเซอร์ของ KaraMixer"), this);
         help->setWordWrap(true);
         v->addWidget(help);
 
@@ -269,19 +241,9 @@ public:
         status->setWordWrap(true);
         g->addWidget(status, 1, 2, 1, 1);
 
-        g->addWidget(new QLabel(QString::fromUtf8("ระดับเสียง :"), gi), 2, 0);
-        QHBoxLayout *hv = new QHBoxLayout();
-        sl = new QSlider(Qt::Horizontal, gi);
-        sl->setRange(0, 150);
-        sl->setValue(br.volume());
-        lbVol = new QLabel(gi);
-        lbVol->setMinimumWidth(48);
-        hv->addWidget(sl, 1);
-        hv->addWidget(lbVol);
-        g->addLayout(hv, 2, 1);
-        chMute = new QCheckBox(QString::fromUtf8("ปิดเสียง"), gi);
-        chMute->setChecked(br.isMuted());
-        g->addWidget(chMute, 2, 2);
+        QLabel *tip = new QLabel(QString::fromUtf8("ระดับเสียง / ปิดเสียง / โซโล ปรับที่แทรค <b>WeSing</b> (แทรคแรกของกลุ่ม Bus) ในมิกเซอร์ เสียงผ่าน Master ตามปกติ"), gi);
+        tip->setWordWrap(true);
+        g->addWidget(tip, 2, 0, 1, 3);
 
         g->addWidget(new QLabel(QString::fromUtf8("สัญญาณ :"), gi), 3, 0);
         meter = new QProgressBar(gi);
@@ -340,17 +302,6 @@ public:
         // ---- actions
         connect(btnRefresh, &QPushButton::clicked, this, [this]() { fillInputs(cbInput->currentText()); });
         connect(btnStart, &QPushButton::clicked, this, [this]() { toggle(); });
-        connect(sl, &QSlider::valueChanged, this, [this](int val) {
-            WeSingBridge::get().setVolume(val);
-            QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-            s.setValue("WeSingVolume", val);
-            lbVol->setText(QString::number(val) + QStringLiteral(" %"));
-        });
-        connect(chMute, &QCheckBox::toggled, this, [this](bool on) {
-            WeSingBridge::get().setMuted(on);
-            QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-            s.setValue("WeSingMute", on);
-        });
         connect(chAuto, &QCheckBox::toggled, this, [this](bool on) {
             QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
             s.setValue("WeSingAuto", on);
@@ -381,7 +332,6 @@ public:
             meter->setValue(pct);
         });
         tm->start(60);
-        lbVol->setText(QString::number(sl->value()) + QStringLiteral(" %"));
     }
 
     ~WeSingDialog() override
@@ -433,8 +383,6 @@ private:
                 QString::fromUtf8("ไม่พบอุปกรณ์อินพุต: ติดตั้ง VB-Cable (สายเสียงเสมือน) แล้วกด \"โหลดรายการใหม่\""));
             return;
         }
-        b.setVolume(sl->value());
-        b.setMuted(chMute->isChecked());
         QString err;
         if (!b.start(cbInput->currentData().toInt(), cbInput->currentText(), synth, err)) {
             QMessageBox::warning(this, QStringLiteral("WeSing"),
@@ -488,9 +436,6 @@ private:
     QComboBox *cbInput = nullptr;
     QPushButton *btnStart = nullptr;
     QLabel *status = nullptr;
-    QLabel *lbVol = nullptr;
-    QSlider *sl = nullptr;
-    QCheckBox *chMute = nullptr;
     QCheckBox *chAuto = nullptr;
     QProgressBar *meter = nullptr;
     QLineEdit *edExe = nullptr;

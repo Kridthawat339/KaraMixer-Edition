@@ -31,6 +31,12 @@ SpeakerDialog::SpeakerDialog(QWidget *parent, QMap<InstrumentType, InstCh *> *ch
         rowTypes.insert(at >= 0 ? at : rowTypes.count(), InstrumentType::Canthai);
     }
 
+    // the WeSing strip sits just before Bus 1
+    if (rowTypes.removeOne(InstrumentType::WeSing)) {
+        const int at = rowTypes.indexOf(InstrumentType::BusGroup1);
+        rowTypes.insert(at >= 0 ? at : rowTypes.count(), InstrumentType::WeSing);
+    }
+
     // setup speaker table
     for (int i=0; i<rowTypes.count(); i++)
     {

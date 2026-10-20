@@ -86,6 +86,7 @@ static QString revText(int v)
 static QColor nameColorFor(InstrumentType t)
 {
     const int i = static_cast<int>(t);
+    if (t == InstrumentType::WeSing) return QColor(0xFF, 0x6E, 0xA8);   // WeSing app strip
     if (t == InstrumentType::Canthai) return QColor(0xE8, 0x7A, 0x3A);   // khaen: same family colour as the pipe strip
     if (i <= 4)  return QColor(0xE0, 0xA0, 0x30);   // keys / chromatic / percussive
     if (i == 5)  return QColor(0x8A, 0x6B, 0xE8);   // bass

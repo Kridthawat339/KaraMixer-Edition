@@ -496,7 +496,7 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
             st.setArrayIndex(static_cast<int>(t));
             int dv = st.value("Device", 0).toInt();
             int  b = st.value("Bus", -1).toInt();
-            int ml = st.value("Volume", 50).toInt();
+            int ml = st.value("Volume", t == InstrumentType::WeSing ? 100 : 50).toInt();
             int pn = st.value("Pan", 0).toInt();
             int rv = st.value("Reverb", 0).toInt();
             double tr = st.value("Trim", 0.0).toDouble();
@@ -803,7 +803,7 @@ void SynthMixerDialog::reloadFromSettings()
         st.setArrayIndex(static_cast<int>(t));
         const int dv = st.value("Device", 0).toInt();
         const int b = st.value("Bus", -1).toInt();
-        const int ml = st.value("Volume", 50).toInt();
+        const int ml = st.value("Volume", t == InstrumentType::WeSing ? 100 : 50).toInt();
         const int pn = st.value("Pan", 0).toInt();
         const int rv = st.value("Reverb", 0).toInt();
         const double tr = st.value("Trim", 0.0).toDouble();
@@ -1794,12 +1794,13 @@ void SynthMixerDialog::mapChInstUI()
     chInstMap[InstrumentType::BusGroup16]   = ui->ch_62;
 
     chInstMap[InstrumentType::Canthai]      = ui->ch_63;   // khaen strip (drawn after the Pipe strip)
+    chInstMap[InstrumentType::WeSing]       = ui->ch_64;   // WeSing app sound: first strip of the Bus group
 }
 
 void SynthMixerDialog::setChInstDetails()
 {
-    // 63 (the last one is the Canthai strip, appended after the buses)
-    QString names[63] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
+    // 64 (appended after the buses: Canthai, then WeSing)
+    QString names[64] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
                         "Bass", "Nylon", "Steel", "Jazz", "Clean",
                         "Overdrv", "Distrn", "Harmncs", "Trumpet", "Brass",
                         "S.Brass", "Saxphn", "Reed", "Pipe", "Strings",
@@ -1815,9 +1816,9 @@ void SynthMixerDialog::setChInstDetails()
                         "Bus 9", "Bus 10", "Bus 11", "Bus 12",
                         "Bus 13", "Bus 14", "Bus 15", "Bus 16",
 
-                        "Canthai" };
+                        "Canthai", "WeSing" };
 
-    QString tooltips[63] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
+    QString tooltips[64] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
                              "Percussive", "Bass", "Acoustic Guitar (nylon)",
                              "Acoustic Guitar (steel)", "Electric Guitar (jazz)",
                              "Electric Guitar (clean)", "Overdriven Guitar",
@@ -1839,10 +1840,11 @@ void SynthMixerDialog::setChInstDetails()
                              "Bus Group 9", "Bus Group 10", "Bus Group 11", "Bus Group 12",
                              "Bus Group 13", "Bus Group 14", "Bus Group 15", "Bus Group 16",
 
-                             "Canthai (Khaen / แคน)"};
+                             "Canthai (Khaen / แคน)",
+                             "WeSing (เสียงจากแอป WeSing ผ่าน VB-Cable)"};
 
     QString rc = ":/Icons/Instruments/";
-    QString imgs[63] = { "Piano.png", "Organ.png", "Accordion.png",
+    QString imgs[64] = { "Piano.png", "Organ.png", "Accordion.png",
                          "Chromatic Percussion.png", "Percussive.png",
                          "Bass.png", "Nylon.png", "Steel.png", "Jazz.png",
                          "Clean.png", "Overdriven.png", "Distortion.png",
@@ -1864,7 +1866,7 @@ void SynthMixerDialog::setChInstDetails()
                          "bs9.png", "bs10.png", "bs11.png", "bs12.png",
                          "bs13.png", "bs14.png", "bs15.png", "bs16.png",
 
-                         "Canthai.png" };
+                         "Canthai.png", "" };
 
 
     for (int i=0; i<synth->HANDLE_STREAM_COUNT; i++)
@@ -1878,6 +1880,8 @@ void SynthMixerDialog::setChInstDetails()
             ich->setInstrumentImage(modernBadge(QStringLiteral("FX"), QColor(0xb3, 0x88, 0xff), false));
         else if (i >= 42 && i < 46)   // VSTi 1..4
             ich->setInstrumentImage(modernBadge(QStringLiteral("VSTi"), QColor(0x4f, 0xc3, 0xf7), false));
+        else if (i == 63)             // WeSing
+            ich->setInstrumentImage(modernBadge(QStringLiteral("WS"), QColor(0xff, 0x6e, 0xa8), false));
         else if (i >= 46 && i < 62)   // bus 1..16
             ich->setInstrumentImage(modernBadge(QString::number(i - 45), tagAccent(ich->nameTag()), true));
         else

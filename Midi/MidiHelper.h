@@ -113,7 +113,10 @@ enum class InstrumentType
 
     // Khaen (Thai/Isan mouth organ) strip. Added AFTER the buses on purpose: the saved mixer settings are stored by
     // the number of the strip, so no existing strip changes its number. Use isBusType() instead of "t >= BusGroup1".
-    Canthai
+    Canthai,
+
+    // WeSing app sound (fed by the virtual cable). A normal strip - fader, mute, solo, meter, Master - shown first in the Bus group.
+    WeSing
 };
 
 inline bool isBusType(InstrumentType t)

@@ -158,6 +158,7 @@ MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)
         im.vsti = -1;
         im.device = 0;
         im.speaker = SpeakerType::Default;
+        if (i == HANDLE_WESING) im.volume = 100;
 
         instMap[t] = im;
 
@@ -632,7 +633,7 @@ struct TrimDsp
     std::atomic<float> target{1.0f};    // set from the GUI thread
     float cur = 1.0f;                   // audio thread only
 };
-TrimDsp g_trimDsp[63];                  // one per strip (MIDI / VSTi / bus), index = InstrumentType
+TrimDsp g_trimDsp[64];                  // one per strip (MIDI / VSTi / bus), index = InstrumentType
 
 void CALLBACK trimDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void *user)
 {
@@ -676,7 +677,7 @@ void CALLBACK trimDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void 
 void attachTrimDsp(InstrumentType t, DWORD handle)
 {
     const int i = static_cast<int>(t);
-    if (!handle || i < 0 || i >= 63)
+    if (!handle || i < 0 || i >= 64)
         return;
     g_trimDsp[i].cur = g_trimDsp[i].target.load();         // a new stream starts at the current trim, no glide
     BASS_ChannelSetDSP(handle, trimDspProc, &g_trimDsp[i], -1000);
@@ -1652,7 +1653,7 @@ void MidiSynthesizer::setTrim(InstrumentType t, double db)
 {
     instMap[t].trimDb = qBound(-12.0, db, 12.0);
     const int i = static_cast<int>(t);
-    if (i >= 0 && i < 63)
+    if (i >= 0 && i < 64)
         g_trimDsp[i].target.store(float(std::pow(10.0, instMap[t].trimDb / 20.0)));   // the strip's DSP glides to it
 }
 
@@ -1837,7 +1838,7 @@ static void restoreStream(HSTREAM h, const QVector<DWORD> &v)
 
 void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
 {
-    if (isBusType(t))
+    if (isBusType(t) || t == InstrumentType::WeSing)
         return;
 
     instMap[t].speaker = speaker;
@@ -2521,6 +2522,10 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
             return h; // vsti handle
             #endif
         }
+    }
+    else if (index == HANDLE_WESING)   // WeSing: a push stream the WeSing bridge writes the captured app sound into
+    {
+        return BASS_StreamCreate(48000, 2, BASS_SAMPLE_FLOAT|BASS_STREAM_DECODE, STREAMPROC_PUSH, nullptr);   // float: the bridge pushes float samples
     }
     else // bus stream
     {

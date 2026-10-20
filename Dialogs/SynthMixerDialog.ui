@@ -2460,6 +2460,46 @@
          <number>0</number>
         </property>
         <item>
+         <widget class="BackgroundChMx" name="frame_64">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_64">
+           <property name="leftMargin">
+            <number>1</number>
+           </property>
+           <property name="topMargin">
+            <number>1</number>
+           </property>
+           <property name="rightMargin">
+            <number>1</number>
+           </property>
+           <property name="bottomMargin">
+            <number>1</number>
+           </property>
+           <item>
+            <widget class="InstCh" name="ch_64" native="true">
+             <property name="minimumSize">
+              <size>
+               <width>76</width>
+               <height>398</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>76</width>
+               <height>398</height>
+              </size>
+             </property>
+             <property name="autoFillBackground">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+        <item>
          <widget class="BackgroundChMx" name="frame_47">
           <property name="frameShape">
            <enum>QFrame::StyledPanel</enum>
