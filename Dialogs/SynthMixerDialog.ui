@@ -2499,6 +2499,9 @@
              </property>
             </widget>
            </item>
+          </layout>
+         </widget>
+        </item>
         <item>
          <widget class="BackgroundChMx" name="frame_47">
           <property name="frameShape">
