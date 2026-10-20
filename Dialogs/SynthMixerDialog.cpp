@@ -1263,6 +1263,7 @@ void SynthMixerDialog::fitToContent()
     if (masterStrip && masterStrip->parentWidget() && masterStrip->parentWidget()->layout() && ui->scrollArea->widget()) {
         const int gap = qMax(0, ui->scrollArea->height() - ui->scrollArea->widget()->height() - ui->scrollArea->frameWidth());
         masterStrip->parentWidget()->layout()->setContentsMargins(0, 0, 0, 0);   // frame extends to the scroll bar line
+        masterStrip->setMaximumHeight(QWIDGETSIZE_MAX);   // alignMasterMute() sets the real limit again
         (void)gap;
     }
     if (QLayout *lay = layout()) {
@@ -1502,6 +1503,11 @@ void SynthMixerDialog::setStripsHidden(bool hide)
         if (w >= av.width()) x = av.x();
         setGeometry(x, g.y(), w, g.height());
         layout()->activate();
+        // the same fitting a normal show does: strip areas, window height and master frame come out exactly as
+        // at start-up however many times HIDE was pressed (without it the height / frame drifted a little each time)
+        fitToContent();
+        if (!isMaximized() && !isFullScreen())
+            setGeometry(x, g.y(), w, height());
         QTimer::singleShot(0, this, [this]() { alignMasterMute(); });
         QTimer::singleShot(150, this, [this]() { alignMasterMute(); });
     }
