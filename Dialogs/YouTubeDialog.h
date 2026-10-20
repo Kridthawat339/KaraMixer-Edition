@@ -134,8 +134,12 @@ public:
         v.setSharpness(st.value("YouTubeVocalSharp", 60).toInt());
         v.setKeepLow(st.value("YouTubeVocalLow", 160).toInt());
         v.setKeepHigh(st.value("YouTubeVocalHigh", 12000).toInt());
+        v.setKeepDrums(st.value("YouTubeVocalDrums", 60).toInt());
         v.setEnabled(st.value("YouTubeVocalOn", false).toBool());
     }
+
+    // level for the mixer's YouTube strip / master meters (separate from the window's meter)
+    float takeStripPeak() { const float v = stripPeak; stripPeak = 0.0f; return v; }
 
     float takePeak() { const float v = peak; peak = 0.0f; return v; }
 
@@ -179,6 +183,7 @@ private:
             if (a > m) m = a;
         }
         if (m > b->peak) b->peak = m;
+        if (m > b->stripPeak) b->stripPeak = m;
 
         // the capture clock and the output clock drift apart: never let more than ~120 ms pile up
         const DWORD keepBytes = kRate / 1000 * 120 * 2 * sizeof(float);
@@ -217,6 +222,11 @@ private:
         const DWORD h = synth->getChannelHandle(InstrumentType::YouTube);
         if (h && h != push.load())
             push = h;
+        // the mixer drops a stream that stalls: put the strip's stream back into its mixer when it is gone
+        if (h && BASS_Mixer_ChannelGetMixer(h) == 0) {
+            const InstrumentType t = InstrumentType::YouTube;
+            synth->setBusGroup(t, synth->instrument(t).bus);
+        }
     }
 
     std::atomic<DWORD> push{0};
@@ -230,6 +240,7 @@ private:
     QTimer *timer = nullptr;
     QString devName;
     std::atomic<float> peak{0.0f};
+    std::atomic<float> stripPeak{0.0f};
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -317,14 +328,15 @@ public:
         addSlider(2, QString::fromUtf8("ความคม :"), 0, 100, st.value("YouTubeVocalSharp", 60).toInt(), lbSharp, slSharp);
         addSlider(3, QString::fromUtf8("เก็บเบส/กลองต่ำกว่า :"), 60, 400, st.value("YouTubeVocalLow", 160).toInt(), lbLow, slLow);
         addSlider(4, QString::fromUtf8("เก็บเสียงสูงเหนือ :"), 4000, 16000, st.value("YouTubeVocalHigh", 12000).toInt(), lbHigh, slHigh);
+        addSlider(5, QString::fromUtf8("รักษากลอง/เสียงแตก :"), 0, 100, st.value("YouTubeVocalDrums", 60).toInt(), lbDrum, slDrum);
 
         QLabel *vnote = new QLabel(QString::fromUtf8(
             "เคล็ดลับ: ความแรงสูงสุด 100 = ตัดเต็มที่ ถ้าเสียงดนตรีโดนตัดตามไปด้วยให้ลดความแรงหรือเพิ่มค่า \"เก็บเบส/กลอง\" "
-            "ถ้ายังมีเสียงร้องเหลือให้เพิ่ม \"ความคม\"<br>"
+            "ถ้ายังมีเสียงร้องเหลือให้เพิ่ม \"ความคม\" ส่วน \"รักษากลอง/เสียงแตก\" ยิ่งสูงยิ่งเก็บกลอง ฉาบ และเสียงซ่ามากขึ้น (ตัดเฉพาะเสียงที่เป็นโทนของเสียงร้อง) แต่เสียงร้องอาจเหลือเล็กน้อย<br>"
             "<span style='color:#aaa'>ข้อจำกัด: เพลงที่มิกซ์รวมกันแล้วแยกเสียงร้องออก 100% ไม่ได้ในทางเทคนิค วิธีนี้ได้ผลดีกับเพลงสเตอริโอที่เสียงร้องหลักอยู่ตรงกลาง "
             "เสียงก้อง/คอรัสกว้างหรือเพลงโมโนจะยังเหลืออยู่ ถ้าต้องการสะอาดที่สุด ให้ค้นหาคลิปแบบ \"karaoke / instrumental / ดนตรีล้วน\" ใน YouTube แล้วปิดตัดเสียงร้อง</span>"), gv);
         vnote->setWordWrap(true);
-        vg->addWidget(vnote, 5, 0, 1, 3);
+        vg->addWidget(vnote, 6, 0, 1, 3);
         v->addWidget(gv);
 
         // ---- browser
@@ -349,7 +361,7 @@ public:
 
         QLabel *note = new QLabel(QString::fromUtf8(
             "หมายเหตุ: อย่าตั้งเอาต์พุตของ KaraMixer เป็น CABLE Input (เสียงจะวนกลับเข้ามาเอง) "
-            "เสียงจะหน่วงเพิ่มเล็กน้อย (ประมาณ 0.1 วินาที เมื่อเปิดตัดเสียงร้อง) ไม่กระทบเพลงที่เล่นในมิกเซอร์ "
+            "เสียงจะหน่วงเพิ่ม (ประมาณ 0.15–0.2 วินาที เมื่อเปิดตัดเสียงร้อง) ไม่กระทบเพลงที่เล่นในมิกเซอร์ "
             "การล็อกอินใช้หน้าล็อกอินของ Google ในเบราว์เซอร์โดยตรง KaraMixer ไม่เห็นและไม่เก็บรหัสผ่าน"), this);
         note->setWordWrap(true);
         v->addWidget(note);
@@ -371,7 +383,7 @@ public:
         connect(btnRefresh, &QPushButton::clicked, this, [this]() { fillInputs(cbInput->currentText()); });
         connect(btnStart, &QPushButton::clicked, this, [this]() { toggle(true); });
         connect(chVocal, &QCheckBox::toggled, this, [this](bool) { applyVocal(); });
-        for (QSlider *sl : { slStr, slSharp, slLow, slHigh })
+        for (QSlider *sl : { slStr, slSharp, slLow, slHigh, slDrum })
             connect(sl, &QSlider::valueChanged, this, [this](int) { applyVocal(); });
         connect(chAuto, &QCheckBox::toggled, this, [this](bool on) {
             QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
@@ -428,6 +440,7 @@ private:
         vr.setSharpness(slSharp->value());
         vr.setKeepLow(slLow->value());
         vr.setKeepHigh(slHigh->value());
+        vr.setKeepDrums(slDrum->value());
         vr.setEnabled(chVocal->isChecked());
         QSettings s(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
         s.setValue("YouTubeVocalOn", chVocal->isChecked());
@@ -435,6 +448,7 @@ private:
         s.setValue("YouTubeVocalSharp", slSharp->value());
         s.setValue("YouTubeVocalLow", slLow->value());
         s.setValue("YouTubeVocalHigh", slHigh->value());
+        s.setValue("YouTubeVocalDrums", slDrum->value());
         updateLabels();
     }
 
@@ -443,6 +457,7 @@ private:
         lbStr->setText(QString::number(slStr->value()) + QStringLiteral(" %"));
         lbSharp->setText(QString::number(slSharp->value()) + QStringLiteral(" %"));
         lbLow->setText(QString::number(slLow->value()) + QStringLiteral(" Hz"));
+        lbDrum->setText(QString::number(slDrum->value()) + QStringLiteral(" %"));
         lbHigh->setText(QString::number(slHigh->value() / 1000.0, 'f', 1) + QStringLiteral(" kHz"));
     }
 
@@ -541,8 +556,8 @@ private:
     QLabel *status = nullptr;
     QCheckBox *chAuto = nullptr;
     QCheckBox *chVocal = nullptr;
-    QSlider *slStr = nullptr, *slSharp = nullptr, *slLow = nullptr, *slHigh = nullptr;
-    QLabel *lbStr = nullptr, *lbSharp = nullptr, *lbLow = nullptr, *lbHigh = nullptr;
+    QSlider *slStr = nullptr, *slSharp = nullptr, *slLow = nullptr, *slHigh = nullptr, *slDrum = nullptr;
+    QLabel *lbStr = nullptr, *lbSharp = nullptr, *lbLow = nullptr, *lbHigh = nullptr, *lbDrum = nullptr;
     QProgressBar *meter = nullptr;
     QLineEdit *edExe = nullptr;
     QTimer *tm = nullptr;

@@ -3,7 +3,7 @@
 
 // Vocal remover for a stereo float stream (48 kHz): frequency-domain "centre channel" removal.
 //
-// How it works (per FFT bin, 4096-point STFT, 75 % overlap, Hann analysis + synthesis windows):
+// How it works (per FFT bin, 8192-point STFT, 87.5 % overlap, Hann analysis + synthesis windows):
 //   M = L + R (what both channels share = centre: lead vocal, but also kick / snare / bass)
 //   S = L - R (what differs = stereo instruments, reverb, backing instruments)
 //   m = |L-R|^2 / (|L|^2 + |R|^2), clamped to 0..1   0 = pure centre, 1 = one side only (or out of phase)
@@ -14,7 +14,7 @@
 // The gain is smoothed over time and over neighbouring bins to avoid "musical noise".
 // It is NOT a 100 % vocal remover: a mixed song cannot be un-mixed exactly. It works best on stereo songs
 // whose lead vocal is panned dead centre; reverb of the voice, doubled / wide backing vocals and a mono
-// recording stay. Latency: about 64 ms.
+// recording stay. Latency: about 150 ms.
 //
 // Header-only, thread-safe setters (atomics); process() must be called from one thread only.
 
@@ -27,8 +27,8 @@
 class VocalRemover
 {
 public:
-    static constexpr int N = 4096;
-    static constexpr int HOP = N / 4;
+    static constexpr int N = 8192;
+    static constexpr int HOP = N / 8;
     static constexpr int BINS = N / 2 + 1;
 
     VocalRemover()
@@ -59,6 +59,7 @@ public:
     void setSharpness(int percent){ sharp = (std::min)(100, (std::max)(0, percent)); }          // 0..100
     void setKeepLow(int hz)       { lowHz = (std::min)(600, (std::max)(40, hz)); }              // bass / kick kept below
     void setKeepHigh(int hz)      { highHz = (std::min)(20000, (std::max)(3000, hz)); }         // air / cymbals kept above
+    void setKeepDrums(int percent){ drums = (std::min)(100, (std::max)(0, percent)); }     // 0..100: keep broadband centre sounds (drums, hi-hat, S sounds)
     void setSampleRate(int hz)    { rate = hz; }
 
     // clears the history (call when the processing is switched on)
@@ -136,6 +137,15 @@ private:
         fft(L, false);
         fft(R, false);
 
+        // spectral peakiness of the centre signal: a voice is made of narrow harmonic peaks, drums / hi-hat / "S" sounds are
+        // broadband. Bins that are NOT peaks are attenuated less (keep-drums amount).
+        const float drumAmt = drums.load() / 100.0f;
+        std::vector<float> cmag(BINS), pre(BINS + 1, 0.0f);
+        for (int k = 0; k < BINS; k++) {
+            cmag[k] = std::abs(L[k] + R[k]);
+            pre[k + 1] = pre[k] + cmag[k];
+        }
+
         std::vector<float> g(BINS);
         for (int k = 0; k < BINS; k++) {
             const cf sum = L[k] + R[k], dif = L[k] - R[k];
@@ -144,9 +154,25 @@ private:
             const float m = (std::min)(1.0f, pd / (std::norm(L[k]) + std::norm(R[k]) + 1e-12f));   // 0 = same in both channels (centre) .. 1 = one side only / opposite phase
             const float f = k * binHz;
             const float band = smooth(f, lo * 0.7f, lo * 1.3f) * (1.0f - smooth(f, hi * 0.8f, hi * 1.2f));
-            float target = 1.0f - s * band * (1.0f - std::pow(m, sharpExp));
+            const int a0 = (std::max)(0, k - 7), a1 = (std::min)(BINS - 1, k + 7);
+            const float localMean = (pre[a1 + 1] - pre[a0]) / float(a1 - a0 + 1);
+            const float peaky = smooth(cmag[k] / (localMean + 1e-9f), 1.0f, 2.2f);
+            const float tonalW = (1.0f - drumAmt) + drumAmt * peaky;
+            float target = 1.0f - s * band * tonalW * (1.0f - std::pow(m, sharpExp));
             if (target < 0.0f) target = 0.0f;
             g[k] = target;
+        }
+        // widen every cut by 2 bins so the skirts of a harmonic are removed with its peak
+        {
+            std::vector<float> w(g);
+            for (int k = 0; k < BINS; k++) {
+                float mn = w[k];
+                for (int d = -2; d <= 2; d++) {
+                    const int j = k + d;
+                    if (j >= 0 && j < BINS && w[j] < mn) mn = w[j];
+                }
+                g[k] = mn;
+            }
         }
         // smooth over frequency (3 taps) then over time (fast down, slower up)
         for (int k = 0; k < BINS; k++) {
@@ -167,7 +193,7 @@ private:
         }
         fft(L, true);
         fft(R, true);
-        const float norm = (2.0f / 3.0f) / N;       // Hann x Hann at 75 % overlap sums to 1.5
+        const float norm = (1.0f / 3.0f) / N;       // Hann x Hann at 87.5 % overlap sums to 3
         for (int i = 0; i < N; i++) {
             accL[i] += L[i].real() * win[i] * norm;
             accR[i] += R[i].real() * win[i] * norm;
@@ -180,7 +206,7 @@ private:
     std::vector<float> inL, inR, accL, accR, gainPrev;
     bool primed = false;
     std::atomic<bool> enabledFlag{false};
-    std::atomic<int> strength{100}, sharp{60}, lowHz{160}, highHz{12000}, rate{48000};
+    std::atomic<int> strength{100}, sharp{60}, lowHz{160}, highHz{12000}, drums{60}, rate{48000};
 };
 
 #endif // VOCALREMOVER_H
