@@ -1627,6 +1627,9 @@ void SynthMixerDialog::buildSidePanels()
     QWidget *left = new QWidget(this);
     left->setObjectName("leftPanel");
     left->setFixedWidth(78);
+    // The buttons stretch to the strips' height; their own (expanded) size hints must not make the window taller
+    // than the strips need - that left an empty band under the strips and the master frame.
+    left->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Ignored);
     left->setStyleSheet(panelCss);
     QVBoxLayout *lv = new QVBoxLayout(left);
     lv->setContentsMargins(0, 0, 0, 0);
