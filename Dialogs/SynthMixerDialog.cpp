@@ -1226,6 +1226,8 @@ void SynthMixerDialog::showEvent(QShowEvent *)
         }
         QTimer::singleShot(0, this, [this]() { alignMasterMute(); });   // after the layout has settled
         QTimer::singleShot(150, this, [this]() { alignMasterMute(); }); // and once more when everything is final
+    } else {
+        QTimer::singleShot(0, this, [this]() { alignMasterMute(); });   // cheap and repeatable: keeps the frame on the line
     }
     if (FrameOverlay *fo = findChild<FrameOverlay *>())   // keep the corner overlay above every strip
         fo->raise();
@@ -1377,9 +1379,10 @@ void SynthMixerDialog::alignMasterMute()
         QWidget *frame = ref->parentWidget() ? ref->parentWidget() : ref; (void)frame;
         QLayout *rl = masterStrip->parentWidget()->layout();
 
+        QWidget *bar = ui->scrollArea;   // the master frame reaches down to the bottom of the strip area (incl. the scroll bar)
+        masterStrip->setMaximumHeight(QWIDGETSIZE_MAX);   // measure from a free height every time
         for (int pass = 0; pass < 3; pass++) {
             layout()->activate();
-            QWidget *bar = ui->scrollArea;   // the master frame reaches down to the bottom of the strip area (incl. the scroll bar)
             const int stripBot = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
             const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
             const int d = stripBot - masterBot;   // > 0: the master frame ends above the strips' frame
@@ -1395,6 +1398,15 @@ void SynthMixerDialog::alignMasterMute()
             rl->setContentsMargins(m.left(), m.top(), m.right(), nb);
         }
         layout()->activate();
+        {   // hard stop: the master frame never reaches below the strip area's bottom edge (scroll bar line),
+            // whatever the left panel / font / DPI make the row height
+            const int top = masterStrip->mapTo(this, QPoint(0, 0)).y();
+            const int want = bar->mapTo(this, QPoint(0, 0)).y() + bar->height() - top;
+            if (want >= masterStrip->minimumHeight() && want < masterStrip->height()) {
+                masterStrip->setMaximumHeight(want);
+                layout()->activate();
+            }
+        }
 
         // Line the master's FX box, fader, meter and "0.0 dB" read-out up with the strips'. Every size is
         // computed from positions that do not depend on the sizes being set (no feedback, no iteration), so

@@ -74,6 +74,13 @@ namespace {
         }
         g_tapPos.store(pos, std::memory_order_release);
     }
+    // runs on the mixer after the master gain, whichever way the driver pulls it (BASSASIO itself or pairProc)
+    void CALLBACK tapDsp(HDSP, DWORD, void *buffer, DWORD length, void *)
+    {
+        BASS_CHANNELINFO ti;
+        const size_t tc = (g_mix && BASS_ChannelGetInfo(g_mix, &ti) && ti.chans > 0) ? ti.chans : 2;
+        tapWrite(static_cast<const float *>(buffer), length, tc);
+    }
 
     DWORD CALLBACK pairProc(BOOL, DWORD, void *buffer, DWORD length, void *user)
     {
@@ -85,11 +92,6 @@ namespace {
             if (got == (DWORD)-1) got = 0;
             if (got < n) memset((char *)g_pairBuf + got, 0, n - got);
             g_pairBytes = n;
-            {
-                BASS_CHANNELINFO ti;
-                const size_t tc = (g_mix && BASS_ChannelGetInfo(g_mix, &ti) && ti.chans > 0) ? ti.chans : 2;
-                tapWrite(g_pairBuf, n, tc);
-            }
             memcpy(buffer, g_pairBuf, n);
             if (length > n) memset((char *)buffer + n, 0, length - n);
         } else {
@@ -226,6 +228,7 @@ bool AsioOutput::start(unsigned long source, int device)
     }
     g_gainCur = g_gainTarget.load();
     BASS_ChannelSetDSP(g_mix, gainDsp, nullptr, 0);
+    BASS_ChannelSetDSP(g_mix, tapDsp, nullptr, -1);   // after the gain: copy for the RTA
 
     // which stereo pairs get the main mix (default outputs 1+2); pairs the driver does not have are dropped
     // (split mode ignores the mask: the channels go to outputs 1..n in order)
