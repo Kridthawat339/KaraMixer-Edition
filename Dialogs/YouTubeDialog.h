@@ -44,6 +44,7 @@
 #include "Midi/MidiSynthesizer.h"
 #include "Widgets/ProLicense.h"
 #include "Dialogs/VocalRemover.h"
+#include "Midi/YouTubeRing.h"
 #include <vector>
 
 // ------------------------------------------------------------------------------------------------
@@ -81,17 +82,15 @@ public:
         recDevice = dev;
         BASS_RecordSetDevice((DWORD)dev);
 
-        // the YouTube strip of the mixer owns the push stream (fader / mute / solo / Master are the strip's)
-        // (0 while the audio output is still opening: the timer below picks the handle up)
-        const DWORD p = synth ? synth->getChannelHandle(InstrumentType::YouTube) : 0;
+        // the YouTube strip of the mixer reads this capture through a jitter buffer (YouTubeRing)
+        // (fader / mute / solo / Master are the strip's)
+        YouTubeRing::get().clear();
         peak = 0.0f;
-        push = p;
 
         // 10 ms capture period keeps the extra delay small
         rec = BASS_RecordStart(kRate, 2, MAKELONG(BASS_SAMPLE_FLOAT, 10), &YouTubeBridge::recProc, this);
         if (!rec) {
             err = QStringLiteral("BASS_RecordStart error %1").arg(BASS_ErrorGetCode());
-            push = 0;
             BASS_RecordFree();
             return false;
         }
@@ -111,13 +110,11 @@ public:
     {
         if (timer) timer->stop();
         running = false;
-        const DWORD p = push.exchange(0);
         const DWORD r = rec;
         rec = 0;
         if (r) BASS_ChannelStop(r);
-        if (p)
-            BASS_ChannelSetPosition(p, 0, BASS_POS_BYTE);   // drop what is still buffered; the stream itself stays with the strip
-        if (r || p) {
+        YouTubeRing::get().clear();                       // the strip keeps playing silence
+        if (r) {
             BASS_RecordSetDevice((DWORD)recDevice);
             BASS_RecordFree();
         }
@@ -170,8 +167,7 @@ private:
     static BOOL CALLBACK recProc(HRECORD, const void *buffer, DWORD length, void *user)
     {
         YouTubeBridge *b = static_cast<YouTubeBridge *>(user);
-        const DWORD p = b->push.load();
-        if (!p || !length)
+        if (!b->running || !length)
             return TRUE;
 
         // peak meter
@@ -185,19 +181,6 @@ private:
         if (m > b->peak) b->peak = m;
         if (m > b->stripPeak) b->stripPeak = m;
 
-        // the capture clock and the output clock drift apart: never let more than ~120 ms pile up
-        const DWORD keepBytes = kRate / 1000 * 120 * 2 * sizeof(float);
-        const DWORD avail = BASS_ChannelGetData(p, nullptr, BASS_DATA_AVAILABLE);
-        if (avail != (DWORD)-1 && avail > keepBytes) {
-            char tmp[8192];
-            DWORD drop = avail - keepBytes / 2;
-            while (drop > 0) {
-                const DWORD chunk = drop > sizeof(tmp) ? (DWORD)sizeof(tmp) : drop;
-                const DWORD got = BASS_ChannelGetData(p, tmp, chunk);
-                if (got == (DWORD)-1 || got == 0) break;
-                drop -= got;
-            }
-        }
         const void *data = buffer;
         DWORD len = length;
         if (b->vr.enabled()) {                 // vocal remover (about 64 ms later than the input)
@@ -210,7 +193,7 @@ private:
             b->vrWasOn = false;
         }
         if (len)
-            BASS_StreamPutData(p, data, len);
+            YouTubeRing::get().write(static_cast<const float *>(data), int(len / (2 * sizeof(float))));
         return TRUE;
     }
 
@@ -218,10 +201,7 @@ private:
     {
         if (!running || !synth)
             return;
-        // the strip's stream is created again whenever the audio output is re-opened: follow it
         const DWORD h = synth->getChannelHandle(InstrumentType::YouTube);
-        if (h && h != push.load())
-            push = h;
         // the mixer drops a stream that stalls: put the strip's stream back into its mixer when it is gone
         if (h && BASS_Mixer_ChannelGetMixer(h) == 0) {
             const InstrumentType t = InstrumentType::YouTube;
@@ -229,7 +209,6 @@ private:
         }
     }
 
-    std::atomic<DWORD> push{0};
     VocalRemover vr;
     std::vector<float> tmp;
     bool vrWasOn = false;

@@ -1,4 +1,5 @@
 #include "MidiSynthesizer.h"
+#include "YouTubeRing.h"
 #include "Midi/FaderTaper.h"
 #include "Midi/KmSoundfont.h"
 
@@ -2524,7 +2525,7 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
     }
     else if (index == HANDLE_YOUTUBE)   // YouTube: a push stream the YouTube bridge writes the captured app sound into
     {
-        return BASS_StreamCreate(48000, 2, BASS_SAMPLE_FLOAT|BASS_STREAM_DECODE, STREAMPROC_PUSH, nullptr);   // float: the bridge pushes float samples
+        return BASS_StreamCreate(48000, 2, BASS_SAMPLE_FLOAT|BASS_STREAM_DECODE, &YouTubeRing::proc, &YouTubeRing::get());   // float samples from the jitter buffer
     }
     else // bus stream
     {
