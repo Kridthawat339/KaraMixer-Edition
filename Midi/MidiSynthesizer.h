@@ -239,9 +239,9 @@ public:
     void removeVSTiFile(int vstiIndex);
     #endif
 
-    const int HANDLE_STREAM_COUNT = 64;        // 46 MIDI/VSTi + 16 buses + the Canthai strip (62) + the WeSing strip (63)
+    const int HANDLE_STREAM_COUNT = 64;        // 46 MIDI/VSTi + 16 buses + the Canthai strip (62) + the YouTube strip (63)
     const int HANDLE_CANTHAI = 62;
-    const int HANDLE_WESING = 63;
+    const int HANDLE_YOUTUBE = 63;
     const int HANDLE_MIDI_COUNT = 46;
     const int HANDLE_VSTI_START = 42;
     const int HANDLE_VSTI_COUNT = 4;

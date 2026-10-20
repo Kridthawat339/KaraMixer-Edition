@@ -1,0 +1,56 @@
+KaraMixer Edition - NOTICE / ประกาศลิขสิทธิ์และสัญญาอนุญาต
+==========================================================
+
+1. This program / โปรแกรมนี้
+   KaraMixer Edition is free software licensed under the GNU General Public
+   License version 3 (GPLv3). The full licence text is in gpl-3.0.txt.
+   KaraMixer Edition เป็นซอฟต์แวร์เสรีภายใต้ GNU GPL เวอร์ชัน 3
+   (ข้อความสัญญาฉบับเต็มอยู่ในไฟล์ gpl-3.0.txt)
+
+   This program comes with ABSOLUTELY NO WARRANTY, to the extent permitted by law.
+   โปรแกรมนี้ไม่มีการรับประกันใด ๆ เท่าที่กฎหมายอนุญาต
+
+2. Original work / ผลงานต้นฉบับ
+   Based on "Handy Karaoke" by pie62
+   Copyright (C) 2017-2019 pie62 (GPLv3)
+   Modifications and additions: Copyright (C) 2026 Buai Music (KaraMixer Edition)
+   ส่วนที่แก้ไขและเพิ่มเติม: ลิขสิทธิ์ (C) 2026 Buai Music
+   The original copyright and licence notices must be kept in every copy.
+   ต้องคงประกาศลิขสิทธิ์และสัญญาอนุญาตของผู้พัฒนาเดิมไว้ในทุกสำเนา
+
+3. Source code / ซอร์สโค้ด
+   The complete corresponding source code of the version you received is
+   available on request, free of charge for the cost of delivery (GPLv3 section 6):
+   ซอร์สโค้ดเต็มของเวอร์ชันที่คุณได้รับ ขอรับได้ตามที่ติดต่อด้านล่าง
+   (ไม่คิดค่าซอร์สโค้ด คิดเฉพาะค่าจัดส่งหากมี):
+
+   Source / ซอร์ส : <https://github.com/Kridthawat339/KaraMixer-Edition.git>
+   Contact / ติดต่อ: <buaimusic@gmail.com>
+
+   KaraMixer Edition is distributed free of charge. Optional PRO functions are
+   unlocked with a licence key that can be purchased from the author. The key
+   pays for the unlock service, support and updates; it does not take away any
+   right you have under GPLv3 (copy, study, modify and redistribute the source).
+   KaraMixer Edition แจกฟรี ฟังก์ชัน PRO ปลดล็อคด้วยรหัสที่ซื้อจากผู้พัฒนา
+   รหัสคือค่าบริการปลดล็อค ซัพพอร์ต และอัปเดต ไม่ตัดสิทธิ์ของคุณตาม GPLv3
+   (คัดลอก ศึกษา แก้ไข และแจกจ่ายต่อซอร์สโค้ด)
+
+4. Third-party components / ส่วนประกอบของบุคคลที่สาม
+   - Qt 5.15 - LGPLv3 (dynamically linked)  https://www.qt.io
+   - BASS, BASSMIDI, BASSmix, BASSASIO - (C) Un4seen Developments Ltd.
+     Commercial licence required for commercial distribution. https://www.un4seen.com
+   - BASS_FX - (C) JOBnik! (Arthur Aminov)
+   - VST is a trademark of Steinberg Media Technologies GmbH. VST3 SDK: Steinberg.
+   - RtMidi - (C) Gary P. Scavone (MIT-style licence)
+   - Microsoft Visual C++ Redistributable - (C) Microsoft
+   Third-party licence terms remain with their owners.
+   เงื่อนไขของส่วนประกอบภายนอกเป็นของเจ้าของแต่ละราย
+
+5. Not included / ไม่ได้รวมมาในโปรแกรม
+   loopMIDI, VB-Cable, Microsoft Edge / Google Chrome, YouTube, soundfonts and VST plug-ins are
+   products of their own owners, with their own licences. The installer only
+   links to their official download pages. The YouTube function plays YouTube in the
+   user's own browser; it does not download or store any video.
+   ผลิตภัณฑ์เหล่านี้เป็นของเจ้าของเอง ตัวติดตั้งเพียงลิงก์ไปหน้าดาวน์โหลดทางการ
+
+   "KaraMixer", "YouTube" and other names are trademarks of their owners.

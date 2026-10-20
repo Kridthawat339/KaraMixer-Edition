@@ -11,7 +11,7 @@
 #define VER_FILEDESCRIPTION_STR     "KaraMixer Edition"
 #define VER_INTERNALNAME_STR        "KaraMixer Edition"
 #define VER_LEGALCOPYRIGHT_STR      "Copyright © 2026 Buai Music - KaraMixer Edition"
-#define VER_LEGALTRADEMARKS1_STR    "All Rights Reserved"
+#define VER_LEGALTRADEMARKS1_STR    "Licensed under GPLv3"
 #define VER_LEGALTRADEMARKS2_STR    VER_LEGALTRADEMARKS1_STR
 #define VER_ORIGINALFILENAME_STR    "KaraMixer.exe"
 #define VER_PRODUCTNAME_STR         "KaraMixer Edition"

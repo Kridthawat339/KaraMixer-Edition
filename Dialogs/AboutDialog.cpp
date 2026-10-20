@@ -9,6 +9,11 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QFont>
+#include <QTextBrowser>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFile>
+#include <QApplication>
 
 AboutDialog::AboutDialog(QWidget *parent) :
     QDialog(parent),
@@ -64,8 +69,42 @@ AboutDialog::AboutDialog(QWidget *parent) :
             refresh();
         });
 
+        QPushButton *btnLic = new QPushButton(QString::fromUtf8("ลิขสิทธิ์ / ซอร์สโค้ด (GPLv3)"), this);
+        btnLic->setMinimumHeight(32);
+        connect(btnLic, &QPushButton::clicked, this, [this]() {
+            QDialog d(this);
+            d.setWindowTitle(QString::fromUtf8("ลิขสิทธิ์ และ ซอร์สโค้ด"));
+            d.resize(640, 520);
+            QVBoxLayout *v = new QVBoxLayout(&d);
+            QTextBrowser *tb = new QTextBrowser(&d);
+            tb->setOpenExternalLinks(true);
+            QString text;
+            QFile f(QApplication::applicationDirPath() + QStringLiteral("/NOTICE.txt"));
+            if (f.open(QIODevice::ReadOnly))
+                text = QString::fromUtf8(f.readAll());
+            else
+                text = QString::fromUtf8("KaraMixer Edition เป็นซอฟต์แวร์เสรีภายใต้ GNU GPL v3\n"
+                                         "Based on Handy Karaoke (C) 2017-2019 pie62 (GPLv3)\n"
+                                         "ไม่พบไฟล์ NOTICE.txt ในโฟลเดอร์โปรแกรม");
+            tb->setPlainText(text);
+            v->addWidget(tb);
+            QHBoxLayout *h = new QHBoxLayout();
+            QPushButton *bg = new QPushButton(QString::fromUtf8("เปิดข้อความ GPLv3 ฉบับเต็ม"), &d);
+            QPushButton *bc = new QPushButton(QString::fromUtf8("ปิด"), &d);
+            connect(bg, &QPushButton::clicked, &d, []() {
+                QDesktopServices::openUrl(QUrl::fromLocalFile(QApplication::applicationDirPath() + QStringLiteral("/gpl-3.0.txt")));
+            });
+            connect(bc, &QPushButton::clicked, &d, &QDialog::accept);
+            h->addWidget(bg);
+            h->addStretch(1);
+            h->addWidget(bc);
+            v->addLayout(h);
+            d.exec();
+        });
+
         QHBoxLayout *row = new QHBoxLayout();
         row->addStretch(1);
+        row->addWidget(btnLic);
         row->addWidget(btn);
 
         vl->addWidget(hw);

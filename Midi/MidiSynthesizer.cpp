@@ -1837,7 +1837,7 @@ static void restoreStream(HSTREAM h, const QVector<DWORD> &v)
 
 void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
 {
-    if (isBusType(t) || t == InstrumentType::WeSing)
+    if (isBusType(t) || t == InstrumentType::YouTube)
         return;
 
     instMap[t].speaker = speaker;
@@ -2522,7 +2522,7 @@ DWORD MidiSynthesizer::createStream(InstrumentType t)
             #endif
         }
     }
-    else if (index == HANDLE_WESING)   // WeSing: a push stream the WeSing bridge writes the captured app sound into
+    else if (index == HANDLE_YOUTUBE)   // YouTube: a push stream the YouTube bridge writes the captured app sound into
     {
         return BASS_StreamCreate(48000, 2, BASS_SAMPLE_FLOAT|BASS_STREAM_DECODE, STREAMPROC_PUSH, nullptr);   // float: the bridge pushes float samples
     }

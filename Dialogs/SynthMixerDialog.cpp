@@ -70,7 +70,7 @@
 #include <bass_vst.h>
 #include "Vst3/BassVst3.h"
 #include "Dialogs/VSTDirsDialog.h"
-#include "Dialogs/WeSingDialog.h"
+#include "Dialogs/YouTubeDialog.h"
 #include "Widgets/ProLicense.h"
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -1482,25 +1482,26 @@ void SynthMixerDialog::buildSidePanels()
     lv->addWidget(btnPreset);
 
 #ifndef __linux__
-    // ---- WeSing (PRO): karaoke app sound through the mixer (virtual cable) + button that opens the emulator / app
-    QPushButton *btnWeSing = new QPushButton(tr("WeSing"), left);
-    btnWeSing->setFocusPolicy(Qt::NoFocus);
-    btnWeSing->setMinimumHeight(26);
-    btnWeSing->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    btnWeSing->setToolTip(tr("PRO: เปิด WeSing (ร้องคาราโอเกะ) ให้เสียงของแอปผ่านมิกเซอร์"));
-    connect(btnWeSing, &QPushButton::clicked, this, [this]() {
+    // ---- YouTube (PRO): browser sound through the mixer (virtual cable) + vocal remover + button that opens YouTube
+    QPushButton *btnYouTube = new QPushButton(tr("YouTube"), left);
+    btnYouTube->setFocusPolicy(Qt::NoFocus);
+    btnYouTube->setMinimumHeight(26);
+    btnYouTube->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    btnYouTube->setToolTip(tr("PRO: เปิด YouTube ให้เสียงผ่านมิกเซอร์ (มีระบบตัดเสียงร้อง)"));
+    connect(btnYouTube, &QPushButton::clicked, this, [this]() {
         if (!ProLicense::ensureUnlocked(this))
             return;
-        WeSingDialog *d = findChild<WeSingDialog *>(QStringLiteral("weSingDlg"));
+        YouTubeDialog *d = findChild<YouTubeDialog *>(QStringLiteral("youTubeDlg"));
         if (!d) {
-            d = new WeSingDialog(this, synth);
-            d->setObjectName(QStringLiteral("weSingDlg"));
+            d = new YouTubeDialog(this, synth);
+            d->setObjectName(QStringLiteral("youTubeDlg"));
         }
         d->show();
         d->raise();
         d->activateWindow();
+        d->launchYouTube();      // starts the capture (when the virtual cable is found) and opens the YouTube page
     });
-    lv->addWidget(btnWeSing);
+    lv->addWidget(btnYouTube);
 #endif
 
     // show / hide the Pan and Reverb knobs of all strips (lit = shown)
@@ -1794,12 +1795,12 @@ void SynthMixerDialog::mapChInstUI()
     chInstMap[InstrumentType::BusGroup16]   = ui->ch_62;
 
     chInstMap[InstrumentType::Canthai]      = ui->ch_63;   // khaen strip (drawn after the Pipe strip)
-    chInstMap[InstrumentType::WeSing]       = ui->ch_64;   // WeSing app sound: first strip of the Bus group
+    chInstMap[InstrumentType::YouTube]       = ui->ch_64;   // YouTube sound: first strip of the Bus group
 }
 
 void SynthMixerDialog::setChInstDetails()
 {
-    // 64 (appended after the buses: Canthai, then WeSing)
+    // 64 (appended after the buses: Canthai, then YouTube)
     QString names[64] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
                         "Bass", "Nylon", "Steel", "Jazz", "Clean",
                         "Overdrv", "Distrn", "Harmncs", "Trumpet", "Brass",
@@ -1816,7 +1817,7 @@ void SynthMixerDialog::setChInstDetails()
                         "Bus 9", "Bus 10", "Bus 11", "Bus 12",
                         "Bus 13", "Bus 14", "Bus 15", "Bus 16",
 
-                        "Canthai", "WeSing" };
+                        "Canthai", "YouTube" };
 
     QString tooltips[64] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
                              "Percussive", "Bass", "Acoustic Guitar (nylon)",
@@ -1841,7 +1842,7 @@ void SynthMixerDialog::setChInstDetails()
                              "Bus Group 13", "Bus Group 14", "Bus Group 15", "Bus Group 16",
 
                              "Canthai (Khaen / แคน)",
-                             "WeSing (เสียงจากแอป WeSing ผ่าน VB-Cable)"};
+                             "YouTube (เสียงจาก YouTube ผ่าน VB-Cable + ตัดเสียงร้อง)"};
 
     QString rc = ":/Icons/Instruments/";
     QString imgs[64] = { "Piano.png", "Organ.png", "Accordion.png",
@@ -1880,8 +1881,8 @@ void SynthMixerDialog::setChInstDetails()
             ich->setInstrumentImage(modernBadge(QStringLiteral("FX"), QColor(0xb3, 0x88, 0xff), false));
         else if (i >= 42 && i < 46)   // VSTi 1..4
             ich->setInstrumentImage(modernBadge(QStringLiteral("VSTi"), QColor(0x4f, 0xc3, 0xf7), false));
-        else if (i == 63)             // WeSing
-            ich->setInstrumentImage(modernBadge(QStringLiteral("WS"), QColor(0xff, 0x6e, 0xa8), false));
+        else if (i == 63)             // YouTube
+            ich->setInstrumentImage(modernBadge(QStringLiteral("YT"), QColor(0xff, 0x3d, 0x3d), false));
         else if (i >= 46 && i < 62)   // bus 1..16
             ich->setInstrumentImage(modernBadge(QString::number(i - 45), tagAccent(ich->nameTag()), true));
         else

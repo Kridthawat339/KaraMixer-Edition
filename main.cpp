@@ -14,7 +14,7 @@
 #include <QFileInfo>
 #include "Midi/KmSoundfont.h"
 #ifndef __linux__
-#include "Dialogs/WeSingDialog.h"
+#include "Dialogs/YouTubeDialog.h"
 #endif
 #include <QFontDatabase>
 
@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
     splash->finish(mixer);
 
     #ifndef __linux__
-    WeSingBridge::autoStart(w.midiPlayer()->midiSynthesizer());     // WeSing input (PRO), when switched on in its window
+    YouTubeBridge::autoStart(w.midiPlayer()->midiSynthesizer());     // YouTube input (PRO), when switched on in its window
     #endif
 
     delete splash;
