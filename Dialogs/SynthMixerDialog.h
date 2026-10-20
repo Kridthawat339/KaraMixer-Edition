@@ -93,6 +93,11 @@ protected:
     void hideEvent(QHideEvent *event);
     void setStripsHidden(bool hide);   // master-only view (HIDE button on the master strip)
     bool stripsHidden = false;
+    bool event(QEvent *e) override;      // keeps the master frame on the strip line whatever else resizes the window
+    void scheduleAlign();
+    bool alignPending = false;
+    int alignTries = 0;
+    qint64 alignStamp = 0;
     QRect hideSavedGeo;
     QRect hideNarrowGeo;   // the window right after it was made narrow: moving it meanwhile moves the restore too
     int hideSavedMinW = 0;

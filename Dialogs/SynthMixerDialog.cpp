@@ -6,6 +6,7 @@
 #include <QMenu>
 #include <QFileInfo>
 #include <QTimer>
+#include <QDateTime>
 #include <QVariantAnimation>
 #include <QEasingCurve>
 #include <QMessageBox>
@@ -1403,7 +1404,9 @@ void SynthMixerDialog::alignMasterMute()
             // whatever the left panel / font / DPI make the row height
             const int top = masterStrip->mapTo(this, QPoint(0, 0)).y();
             const int want = bar->mapTo(this, QPoint(0, 0)).y() + bar->height() - top;
-            if (want >= masterStrip->minimumHeight() && want < masterStrip->height()) {
+            if (want > 150 && want < masterStrip->height()) {
+                // the contents are placed by position, so the strip may be shorter than its nominal minimum
+                masterStrip->setMinimumHeight(qMin(masterStrip->minimumHeight(), want));
                 masterStrip->setMaximumHeight(want);
                 layout()->activate();
             }
@@ -1515,6 +1518,53 @@ void SynthMixerDialog::setStripsHidden(bool hide)
     if (FrameOverlay *fo = findChild<FrameOverlay *>())
         fo->raise();
     update();
+}
+
+// Self-healing: other things (the browser opening, the auto-hide coming back, a font / DPI change, ...) can resize the
+// window or its layout. After any such event, check - once, shortly after - that the master frame still ends on the
+// strip line, and re-align only if it does not. A few attempts at most, so it can never loop.
+bool SynthMixerDialog::event(QEvent *e)
+{
+    const bool r = QDialog::event(e);
+    switch (e->type()) {
+    case QEvent::LayoutRequest:
+    case QEvent::Resize:
+    case QEvent::WindowActivate:
+    case QEvent::Show:
+        scheduleAlign();
+        break;
+    default:
+        break;
+    }
+    return r;
+}
+
+void SynthMixerDialog::scheduleAlign()
+{
+    if (alignPending || stripsHidden || !masterStrip)
+        return;
+    alignPending = true;
+    QTimer::singleShot(80, this, [this]() {
+        alignPending = false;
+        if (!isVisible() || stripsHidden || !masterStrip || !ui->scrollArea->isVisible())
+            return;
+        QWidget *bar = ui->scrollArea;
+        const int stripBot  = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
+        const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
+        if (qAbs(stripBot - masterBot) <= 1) {
+            alignTries = 0;
+            return;
+        }
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (alignTries == 0 || now - alignStamp > 3000) {
+            alignTries = 0;
+            alignStamp = now;
+        }
+        if (alignTries >= 4)
+            return;
+        alignTries++;
+        alignMasterMute();
+    });
 }
 
 void SynthMixerDialog::hideEvent(QHideEvent *event)
