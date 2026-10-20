@@ -55,10 +55,10 @@ public:
 
     void setEnabled(bool on)      { enabledFlag = on; }
     bool enabled() const          { return enabledFlag; }
-    void setStrength(int percent) { strength = std::min(100, std::max(0, percent)); }       // 0..100
-    void setSharpness(int percent){ sharp = std::min(100, std::max(0, percent)); }          // 0..100
-    void setKeepLow(int hz)       { lowHz = std::min(600, std::max(40, hz)); }              // bass / kick kept below
-    void setKeepHigh(int hz)      { highHz = std::min(20000, std::max(3000, hz)); }         // air / cymbals kept above
+    void setStrength(int percent) { strength = (std::min)(100, (std::max)(0, percent)); }       // 0..100
+    void setSharpness(int percent){ sharp = (std::min)(100, (std::max)(0, percent)); }          // 0..100
+    void setKeepLow(int hz)       { lowHz = (std::min)(600, (std::max)(40, hz)); }              // bass / kick kept below
+    void setKeepHigh(int hz)      { highHz = (std::min)(20000, (std::max)(3000, hz)); }         // air / cymbals kept above
     void setSampleRate(int hz)    { rate = hz; }
 
     // clears the history (call when the processing is switched on)
@@ -141,7 +141,7 @@ private:
             const cf sum = L[k] + R[k], dif = L[k] - R[k];
             const float ps = std::norm(sum), pd = std::norm(dif);
             (void)ps;
-            const float m = std::min(1.0f, pd / (std::norm(L[k]) + std::norm(R[k]) + 1e-12f));   // 0 = same in both channels (centre) .. 1 = one side only / opposite phase
+            const float m = (std::min)(1.0f, pd / (std::norm(L[k]) + std::norm(R[k]) + 1e-12f));   // 0 = same in both channels (centre) .. 1 = one side only / opposite phase
             const float f = k * binHz;
             const float band = smooth(f, lo * 0.7f, lo * 1.3f) * (1.0f - smooth(f, hi * 0.8f, hi * 1.2f));
             float target = 1.0f - s * band * (1.0f - std::pow(m, sharpExp));
