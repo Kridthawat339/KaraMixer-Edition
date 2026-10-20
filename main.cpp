@@ -13,6 +13,9 @@
 #include <QMessageBox>
 #include <QFileInfo>
 #include "Midi/KmSoundfont.h"
+#ifndef __linux__
+#include "Dialogs/WeSingDialog.h"
+#endif
 #include <QFontDatabase>
 
 #include "BASSFX/VSTFX.h"
@@ -128,6 +131,10 @@ int main(int argc, char *argv[])
     }
 
     splash->finish(mixer);
+
+    #ifndef __linux__
+    WeSingBridge::autoStart(w.midiPlayer()->midiSynthesizer());     // WeSing input (PRO), when switched on in its window
+    #endif
 
     delete splash;
     delete pixmap;

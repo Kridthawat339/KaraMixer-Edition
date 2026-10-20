@@ -70,6 +70,8 @@
 #include <bass_vst.h>
 #include "Vst3/BassVst3.h"
 #include "Dialogs/VSTDirsDialog.h"
+#include "Dialogs/WeSingDialog.h"
+#include "Widgets/ProLicense.h"
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1478,6 +1480,28 @@ void SynthMixerDialog::buildSidePanels()
     btnPreset->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     btnPreset->setToolTip(tr("บันทึก / เรียกการตั้งค่ามิกเซอร์ทั้งชุด"));
     lv->addWidget(btnPreset);
+
+#ifndef __linux__
+    // ---- WeSing (PRO): karaoke app sound through the mixer (virtual cable) + button that opens the emulator / app
+    QPushButton *btnWeSing = new QPushButton(tr("WeSing"), left);
+    btnWeSing->setFocusPolicy(Qt::NoFocus);
+    btnWeSing->setMinimumHeight(26);
+    btnWeSing->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    btnWeSing->setToolTip(tr("PRO: เปิด WeSing (ร้องคาราโอเกะ) ให้เสียงของแอปผ่านมิกเซอร์"));
+    connect(btnWeSing, &QPushButton::clicked, this, [this]() {
+        if (!ProLicense::ensureUnlocked(this))
+            return;
+        WeSingDialog *d = findChild<WeSingDialog *>(QStringLiteral("weSingDlg"));
+        if (!d) {
+            d = new WeSingDialog(this, synth);
+            d->setObjectName(QStringLiteral("weSingDlg"));
+        }
+        d->show();
+        d->raise();
+        d->activateWindow();
+    });
+    lv->addWidget(btnWeSing);
+#endif
 
     // show / hide the Pan and Reverb knobs of all strips (lit = shown)
     QToolButton *btnKnobs = new QToolButton(left);

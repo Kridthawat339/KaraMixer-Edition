@@ -43,6 +43,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{tmp}\VC_redist.x86.exe"; Parameters: "/install /passive /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: waituntilterminated; Check: VC2017RedistNeedsInstall
+; WeSing (PRO) needs a virtual audio cable and an Android emulator. They are third-party products with their own licences,
+; so they are NOT bundled: the finish page offers to open the official download pages instead.
+Filename: "https://vb-audio.com/Cable/"; Flags: shellexec nowait postinstall skipifsilent unchecked; Description: "Open the VB-Cable (virtual audio cable) download page - needed for WeSing"
+Filename: "https://www.bluestacks.com/download.html"; Flags: shellexec nowait postinstall skipifsilent unchecked; Description: "Open the BlueStacks download page - needed for WeSing"
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifsilent; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"
 
 [Dirs]
