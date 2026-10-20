@@ -1253,7 +1253,8 @@ void SynthMixerDialog::fitToContent()
     // the master's MUTE lines up with the strips' name tags
     if (masterStrip && masterStrip->parentWidget() && masterStrip->parentWidget()->layout() && ui->scrollArea->widget()) {
         const int gap = qMax(0, ui->scrollArea->height() - ui->scrollArea->widget()->height() - ui->scrollArea->frameWidth());
-        masterStrip->parentWidget()->layout()->setContentsMargins(0, 0, 0, gap);
+        masterStrip->parentWidget()->layout()->setContentsMargins(0, 0, 0, 0);   // frame extends to the scroll bar line
+        (void)gap;
     }
     if (QLayout *lay = layout()) {
         lay->activate();
@@ -1366,12 +1367,13 @@ void SynthMixerDialog::alignMasterMute()
     }
     if (ref) {
         QWidget *tag = ref->nameTag();
-        QWidget *frame = ref->parentWidget() ? ref->parentWidget() : ref;
+        QWidget *frame = ref->parentWidget() ? ref->parentWidget() : ref; (void)frame;
         QLayout *rl = masterStrip->parentWidget()->layout();
 
         for (int pass = 0; pass < 3; pass++) {
             layout()->activate();
-            const int stripBot = frame->mapTo(this, QPoint(0, 0)).y() + frame->height();
+            QWidget *bar = ui->scrollArea;   // the master frame reaches down to the bottom of the strip area (incl. the scroll bar)
+            const int stripBot = bar->mapTo(this, QPoint(0, 0)).y() + bar->height();
             const int masterBot = masterStrip->mapTo(this, QPoint(0, 0)).y() + masterStrip->height();
             const int d = stripBot - masterBot;   // > 0: the master frame ends above the strips' frame
             if (d >= -1 && d <= 1)
