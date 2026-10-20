@@ -1449,9 +1449,59 @@ void SynthMixerDialog::alignMasterMute()
         {
             const int mw = qMin(tag->width(), masterStrip->width() - 2);
             masterStrip->placeMute(QRect((masterStrip->width() - mw) / 2, tagTop - stripTop, mw, tag->height()));   // same size as a strip's name tag
+            // HIDE sits right above MUTE, same size (the empty box under the read-out / TRIM block)
+            masterStrip->placeHide(QRect((masterStrip->width() - mw) / 2, tagTop - stripTop - tag->height() - 6, mw, tag->height()));
         }   // same size as a strip's name tag
     }
     busy = false;
+}
+
+// Master-only view: hide the left panel, both strip areas, the preset tabs and the quick switches so only the title
+// bar, the Menu button and the master strip stay. The window keeps its height (the master strip is placed for it)
+// and only gets narrower, keeping its right edge where it was; showing everything again restores the old width.
+void SynthMixerDialog::setStripsHidden(bool hide)
+{
+    if (hide == stripsHidden)
+        return;
+    stripsHidden = hide;
+    QList<QWidget *> ws;
+    if (QWidget *lp = findChild<QWidget *>("leftPanel"))
+        ws << lp;
+    ws << ui->splitter;
+    ws << ui->btnPreset0 << ui->btnPreset1 << ui->btnPreset2 << ui->btnPreset3 << ui->btnPreset4 << ui->btnPreset5
+       << ui->btnPreset6 << ui->btnPreset7 << ui->btnPreset8 << ui->btnPreset9 << ui->btnPreset10;
+    ws << chkLockDrum << chkLockSnare << chkLockKick << chkLockBass << chkNoTune << btnDrumTune;
+    if (masterStrip && masterStrip->btnHide && masterStrip->btnHide->isChecked() != hide) {
+        masterStrip->btnHide->blockSignals(true);
+        masterStrip->btnHide->setChecked(hide);
+        masterStrip->btnHide->blockSignals(false);
+    }
+    setUpdatesEnabled(false);
+    if (hide) {
+        hideSavedGeo = geometry();
+        hideSavedMinW = minimumWidth();
+        for (QWidget *w : ws)
+            if (w) w->hide();
+        setMinimumWidth(0);
+        layout()->activate();
+        const int w = qMax(layout()->minimumSize().width(), 260);
+        const QRect g = hideSavedGeo;
+        setGeometry(g.right() + 1 - w, g.y(), w, g.height());
+    } else {
+        for (QWidget *w : ws)
+            if (w) w->show();
+        setMinimumWidth(hideSavedMinW);
+        const QRect g = geometry();
+        const int w = hideSavedGeo.width() > 0 ? hideSavedGeo.width() : 970;
+        setGeometry(g.right() + 1 - w, g.y(), w, g.height());
+        layout()->activate();
+        QTimer::singleShot(0, this, [this]() { alignMasterMute(); });
+        QTimer::singleShot(150, this, [this]() { alignMasterMute(); });
+    }
+    setUpdatesEnabled(true);
+    if (FrameOverlay *fo = findChild<FrameOverlay *>())
+        fo->raise();
+    update();
 }
 
 void SynthMixerDialog::hideEvent(QHideEvent *event)
@@ -1723,6 +1773,7 @@ void SynthMixerDialog::buildSidePanels()
                 player->setVolume(v);
             });
     masterStrip->btnMute->setChecked(player->isMasterMute());
+    connect(masterStrip->btnHide, &QPushButton::toggled, this, [this](bool on) { setStripsHidden(on); });
     connect(masterStrip->btnMute, &QPushButton::toggled, this, [this](bool on) {
         player->setMasterMute(on);   // level is kept; only the output gain is forced to 0
         QSettings app(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);

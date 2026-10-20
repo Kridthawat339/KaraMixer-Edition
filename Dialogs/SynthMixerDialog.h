@@ -91,6 +91,10 @@ protected:
     int knobDrop = 0;             // pixels taken away from the strips so far
     void alignMasterMute();
     void hideEvent(QHideEvent *event);
+    void setStripsHidden(bool hide);   // master-only view (HIDE button on the master strip)
+    bool stripsHidden = false;
+    QRect hideSavedGeo;
+    int hideSavedMinW = 0;
     bool fittedOnce = false;   // first show fits the window; auto-hide returns do not
     void closeEvent(QCloseEvent *event);
     void paintEvent(QPaintEvent *event);

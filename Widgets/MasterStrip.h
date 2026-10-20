@@ -32,6 +32,8 @@ class MasterStrip : public QFrame
 public:
     FaderSlider *fader;
     QPushButton *btnMute = nullptr;
+    QPushButton *btnHide = nullptr;   // hides every mixer strip, leaving only this master strip
+    bool hidePlaced = false;
     bool blinkDim = false;
     QLabel *fxHint = nullptr;
     bool mutePlaced = false;
@@ -178,6 +180,13 @@ public:
             "QPushButton:hover { background: transparent; border: 1px solid #f22b3d; color: #f22b3d; }"
             "QPushButton:checked, QPushButton:checked:hover { background: #e5384a; color: #ffffff; border: 1px solid #ff7a7a; }");
 
+        btnHide = new QPushButton(QStringLiteral("HIDE"), this);
+        btnHide->setCheckable(true);
+        btnHide->setFocusPolicy(Qt::NoFocus);
+        btnHide->setCursor(Qt::PointingHandCursor);
+        btnHide->setToolTip(QString::fromUtf8("ซ่อนแถบมิกเซอร์ทั้งหมด เหลือเฉพาะ Master (กดอีกครั้งเพื่อแสดงทั้งหมด)"));
+        btnHide->setStyleSheet(btnMute->styleSheet());   // same look; lit red while the strips are hidden
+
         // while muted the MASTER tag blinks so nobody wonders where the sound went
         const QString tagOn  = lbName->styleSheet();
         const QString tagDim = "QLabel { background-color: #4a1820; color: #ff9aa5; border-radius: 4px;"
@@ -272,6 +281,13 @@ public:
         vu->setGeometry(faderR.x() + 48 + 4, faderR.y(), 14, faderR.height());
         lbDb->setGeometry(dbR);
         trimBox->setGeometry(trimR);
+    }
+
+    void placeHide(const QRect &r)
+    {
+        hidePlaced = true;
+        btnHide->setGeometry(r);
+        btnHide->raise();
     }
 
     void placeMute(const QRect &r)
