@@ -19,6 +19,7 @@
 #include <vector>
 #include <atomic>
 #include <cmath>
+#include <utility>
 #include <QTimer>
 #include <QHash>
 #include <QMutex>
@@ -523,10 +524,55 @@ bool MidiSynthesizer::setDefaultDevice(int dv)
     }
 }
 
-bool MidiSynthesizer::spectrum(float *fft1024)
+bool MidiSynthesizer::spectrum(float *fft1024, int *rateHz)
 {
-    if (!openned || AsioOutput::isActive())
-        return false;           // a decoding (ASIO) mixer must not be read from here
+    if (!openned)
+        return false;
+    if (rateHz)
+        *rateHz = sampleRate > 0 ? sampleRate : 44100;
+    if (AsioOutput::isActive()) {
+        // the main mixer is a decoding stream pulled by the ASIO driver: it can't be read here, so analyse the copy
+        // of the signal that was sent to the driver
+        const int N = 2048;
+        float x[N];
+        int rate = 44100;
+        if (!AsioOutput::tapRead(x, N, rate))
+            return false;
+        if (rateHz)
+            *rateHz = rate;
+        static float re[N], im[N];
+        for (int i = 0; i < N; i++) {
+            const float w = 0.5f - 0.5f * std::cos(2.0f * 3.14159265f * i / (N - 1));   // Hann
+            re[i] = x[i] * w;
+            im[i] = 0.0f;
+        }
+        for (int i = 1, j = 0; i < N; i++) {   // bit reversal
+            int bit = N >> 1;
+            for (; j & bit; bit >>= 1)
+                j ^= bit;
+            j ^= bit;
+            if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+        }
+        for (int len = 2; len <= N; len <<= 1) {
+            const float ang = -2.0f * 3.14159265f / len;
+            const float wr = std::cos(ang), wi = std::sin(ang);
+            for (int i = 0; i < N; i += len) {
+                float cr = 1.0f, ci = 0.0f;
+                for (int k = 0; k < len / 2; k++) {
+                    const int a = i + k, b = i + k + len / 2;
+                    const float tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+                    re[b] = re[a] - tr; im[b] = im[a] - ti;
+                    re[a] += tr;        im[a] += ti;
+                    const float ncr = cr * wr - ci * wi;
+                    ci = cr * wi + ci * wr;
+                    cr = ncr;
+                }
+            }
+        }
+        for (int i = 0; i < 1024; i++)   // same scale as BASS_DATA_FFT2048 (full-scale sine ~ 1.0)
+            fft1024[i] = std::sqrt(re[i] * re[i] + im[i] * im[i]) * (4.0f / N);
+        return true;
+    }
     for (const MixerHandle &m : mixers) {
         if (m.handle == 0)
             continue;

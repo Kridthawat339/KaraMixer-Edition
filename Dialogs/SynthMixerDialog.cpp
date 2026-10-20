@@ -1498,7 +1498,7 @@ void SynthMixerDialog::buildSidePanels()
     connect(btnRta, &QPushButton::clicked, this, [this]() {
         RtaDialog *d = findChild<RtaDialog *>(QStringLiteral("rtaDlg"));
         if (!d) {
-            d = new RtaDialog(this, [this](float *buf) { return synth->spectrum(buf); });
+            d = new RtaDialog(this, [this](float *buf, int &rate) { return synth->spectrum(buf, &rate); });
             d->setObjectName(QStringLiteral("rtaDlg"));
             d->setAttribute(Qt::WA_DeleteOnClose);
         }

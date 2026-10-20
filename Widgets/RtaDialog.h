@@ -20,7 +20,7 @@
 class RtaView : public QWidget
 {
 public:
-    typedef std::function<bool(float *)> Source;
+    typedef std::function<bool(float *, int &)> Source;   // 1024 FFT bins (FFT2048 layout) + the sample rate they were taken at
 
     explicit RtaView(Source src, QWidget *parent = nullptr) : QWidget(parent), source(src)
     {
@@ -38,7 +38,7 @@ private:
     static const int kBands = 31;
     static constexpr float kFloor = -80.0f;     // dB at the bottom of the display
     static constexpr float kCeil = 0.0f;
-    static constexpr float kSampleRate = 44100.0f;
+    float sampleRate = 44100.0f;
 
     Source source;
     QTimer *timer;
@@ -59,11 +59,14 @@ private:
     {
         float fft[1024];
         const float dt = 0.033f;
-        bool ok = source && source(fft);
+        int rate = int(sampleRate);
+        bool ok = source && source(fft, rate);
+        if (ok && rate > 8000)
+            sampleRate = float(rate);
         if (!ok)
             for (int i = 0; i < 1024; ++i) fft[i] = 0.0f;
 
-        const float bin = kSampleRate / 2048.0f;
+        const float bin = sampleRate / 2048.0f;
         for (int b = 0; b < kBands; ++b) {
             const float c = centre(b);
             const float lo = c / 1.1225f, hi = c * 1.1225f;     // 2^(1/6)

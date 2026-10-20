@@ -35,6 +35,7 @@ namespace AsioOutput
     bool        recentlyStopped(int ms);               // ASIO was released less than ms ago
     bool        crashedLastStart();                    // the previous ASIO start never finished (hang / crash): true once, then cleared
     void        logLine(const QString &msg);           // append to ~/.KaraMixer/asio.log
+    bool        tapRead(float *mono, int count, int &rateHz);   // last `count` mono samples sent to the driver (for the RTA); false if not running
     int         currentRate();                         // rate the running driver really uses (0 when not running)
 }
 

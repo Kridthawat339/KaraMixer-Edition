@@ -81,7 +81,7 @@ public:
     bool setDefaultDevice(int dv);
     void setVolume(float vol);
     float volume() { return synth_volume; }
-    bool spectrum(float *fft1024);   // master output FFT (for the RTA); false if nothing is playing yet
+    bool spectrum(float *fft1024, int *rateHz = nullptr);   // master output FFT (for the RTA); false if nothing is playing yet
 
     // Ignore pitch/tuning commands sent to the drum channel (ch 10): GS drum
     // NRPN pitch, RPN fine/coarse tune and pitch bend. Some songs contain them

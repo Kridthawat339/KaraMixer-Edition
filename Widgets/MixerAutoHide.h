@@ -100,6 +100,17 @@ private:
             mixer->setProperty("kmAutoRestore", true);   // window is unchanged: skip the heavy re-fit
             mixer->setAttribute(Qt::WA_ShowWithoutActivating, true);
             mixer->show();
+#ifdef _WIN32
+            // the karaoke program is in front (often full-screen / topmost): put the mixer above it without taking
+            // the focus, otherwise it stays hidden behind it until Win+Tab
+            HWND h = reinterpret_cast<HWND>(mixer->winId());
+            const HWND fg = GetForegroundWindow();
+            const bool fgTop = fg && (GetWindowLongW(fg, GWL_EXSTYLE) & WS_EX_TOPMOST);
+            SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            if (!mixer->property("kmTopmost").toBool() && !fgTop)
+                SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+#endif
+            mixer->raise();
         }
     }
 
@@ -189,7 +200,14 @@ private:
             for (int vk = 8; vk < 255; ++vk) {
                 if (vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2)
                     continue;
-                if (GetAsyncKeyState(vk) & 0x8001) { act = true; break; }
+                // only real keys, and only "is down now" (bit 15): the "pressed since last call" bit (bit 0) and
+                // virtual keys such as IME / packet / OEM-clear can report activity all the time, which kept the
+                // mixer hidden until another window was brought to the front
+                if ((vk > 0x5F && vk < 0x88) || (vk >= 0xBA && vk <= 0xE2) || vk < 0x5C) {
+                    if (vk == VK_PROCESSKEY || vk == VK_PACKET)
+                        continue;
+                    if (GetAsyncKeyState(vk) & 0x8000) { act = true; break; }
+                }
             }
         if (act) {
             lastAct.start();

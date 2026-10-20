@@ -57,6 +57,24 @@ namespace {
     DWORD    g_pairBytes = 0;
     DWORD    g_firstPair = 0;
 
+    // copy of what is sent to the driver (mono), read by the RTA
+    const int kTap = 16384;
+    float g_tap[16384];
+    std::atomic<unsigned> g_tapPos{0};
+    void tapWrite(const float *data, DWORD bytes, size_t chans)
+    {
+        if (chans < 1) return;
+        const size_t frames = bytes / (chans * sizeof(float));
+        unsigned pos = g_tapPos.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < frames; i++) {
+            const float l = data[i * chans];
+            const float r = chans > 1 ? data[i * chans + 1] : l;
+            g_tap[pos & (kTap - 1)] = 0.5f * (l + r);
+            pos++;
+        }
+        g_tapPos.store(pos, std::memory_order_release);
+    }
+
     DWORD CALLBACK pairProc(BOOL, DWORD, void *buffer, DWORD length, void *user)
     {
         const DWORD pair = (DWORD)(size_t)user;
@@ -67,6 +85,11 @@ namespace {
             if (got == (DWORD)-1) got = 0;
             if (got < n) memset((char *)g_pairBuf + got, 0, n - got);
             g_pairBytes = n;
+            {
+                BASS_CHANNELINFO ti;
+                const size_t tc = (g_mix && BASS_ChannelGetInfo(g_mix, &ti) && ti.chans > 0) ? ti.chans : 2;
+                tapWrite(g_pairBuf, n, tc);
+            }
             memcpy(buffer, g_pairBuf, n);
             if (length > n) memset((char *)buffer + n, 0, length - n);
         } else {
@@ -286,6 +309,19 @@ void AsioOutput::stop()
 }
 
 bool AsioOutput::isActive()   { return g_active; }
+
+bool AsioOutput::tapRead(float *mono, int count, int &rateHz)
+{
+    if (!g_active || count <= 0 || count > kTap)
+        return false;
+    const unsigned end = g_tapPos.load(std::memory_order_acquire);
+    if (end < unsigned(count))
+        return false;
+    for (int i = 0; i < count; i++)
+        mono[i] = g_tap[(end - unsigned(count) + unsigned(i)) & (kTap - 1)];
+    rateHz = g_rate > 0 ? g_rate : 44100;
+    return true;
+}
 QString AsioOutput::lastError() { return g_error; }
 void AsioOutput::setRate(int hz) { g_rate = hz > 0 ? hz : 44100; }
 void AsioOutput::setGain(float g) { g_gainTarget = g; }
@@ -323,6 +359,7 @@ QStringList AsioOutput::devices() { return QStringList(); }
 bool AsioOutput::start(unsigned long, int) { return false; }
 void AsioOutput::stop() {}
 bool AsioOutput::isActive() { return false; }
+bool AsioOutput::tapRead(float *, int, int &) { return false; }
 QString AsioOutput::lastError() { return QString(); }
 void AsioOutput::setRate(int) {}
 void AsioOutput::setGain(float) {}

@@ -104,7 +104,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=3.0.0" "_iss_setup\karamixer-${{ matrix.arch }}.iss"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=3.1.0" "_iss_setup\karamixer-${{ matrix.arch }}.iss"
 
       # Artifact storage of the account can be full: do not fail the build because of it
       - uses: actions/upload-artifact@v4
