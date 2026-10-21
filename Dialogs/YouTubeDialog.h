@@ -42,6 +42,7 @@
 
 #include "Config.h"
 #include "Midi/MidiSynthesizer.h"
+#include "Midi/ProcessLoopback.h"
 #include "Widgets/ProLicense.h"
 #include "Dialogs/VocalRemover.h"
 #include "Midi/YouTubeRing.h"
@@ -55,6 +56,9 @@ class YouTubeBridge
 public:
     struct Dev { int index; QString name; };
 
+    static constexpr int kProcDev = -2;      // pseudo device: only the sound of the YouTube window opened by KaraMixer
+    static QString kProcName() { return QString::fromUtf8("[เฉพาะ YouTube] ดักเสียงจากหน้าต่าง YouTube ของ KaraMixer"); }
+
     static YouTubeBridge &get() { static YouTubeBridge b; return b; }
 
     QList<Dev> devices() const
@@ -62,6 +66,9 @@ public:
         QList<Dev> out;
         // WASAPI loopback devices ("what you hear" of an output device): need no virtual cable and no per-app routing
         BASS_SetConfig(BASS_CONFIG_REC_LOOPBACK, 1);
+#ifdef KM_HAVE_PROCLOOP
+        out.append({ kProcDev, kProcName() });
+#endif
         BASS_DEVICEINFO di;
         for (int i = 0; BASS_RecordGetDeviceInfo(i, &di); i++)
             if (di.flags & BASS_DEVICE_ENABLED) {
@@ -81,6 +88,33 @@ public:
         stop();
         synth = s;
 
+#ifdef KM_HAVE_PROCLOOP
+        if (dev == kProcDev) {
+            QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+            const DWORD pid = DWORD(st.value("YouTubeBrowserPid", 0).toUInt());
+            if (!ProcessLoopback::alive(pid)) {
+                err = QString::fromUtf8("ไม่พบหน้าต่าง YouTube ที่เปิดจาก KaraMixer: กดปุ่ม \"เปิด YouTube\" (หรือปุ่ม YouTube ในมิกเซอร์) ก่อน แล้วค่อยกดปุ่มนี้");
+                return false;
+            }
+            YouTubeRing::get().clear();
+            peak = 0.0f;
+            const bool mute = st.value("YouTubeMuteSource", true).toBool();
+            if (!pl.start(pid, [this](const float *d, int n) { feed(d, n); }, mute)) {
+                err = QString::fromUtf8("เริ่มดักเสียงรายโปรแกรมไม่สำเร็จ (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป): ") + pl.lastError();
+                return false;
+            }
+            procMode = true;
+            devName = name;
+            running = true;
+            attach();
+            if (!timer) {
+                timer = new QTimer(qApp);
+                QObject::connect(timer, &QTimer::timeout, qApp, []() { YouTubeBridge::get().attach(); });
+            }
+            timer->start(250);
+            return true;
+        }
+#endif
         if (!BASS_RecordInit(dev) && BASS_ErrorGetCode() != BASS_ERROR_ALREADY) {
             err = QStringLiteral("BASS_RecordInit error %1").arg(BASS_ErrorGetCode());
             return false;
@@ -116,6 +150,9 @@ public:
     {
         if (timer) timer->stop();
         running = false;
+#ifdef KM_HAVE_PROCLOOP
+        if (procMode) { pl.stop(); procMode = false; }
+#endif
         const DWORD r = rec;
         rec = 0;
         if (r) BASS_ChannelStop(r);
@@ -149,6 +186,16 @@ public:
     // diagnostics for the window: how much data the capture device delivers, and how loud it is
     unsigned long long bytesReceived() const { return bytesIn.load(); }
     float takeDiagPeak() { return diagPeak.exchange(0.0f); }
+    // 0 normal, 1 program muted at the speakers (heard only through the mixer), 2 muting is not possible here
+    int muteState() const
+    {
+#ifdef KM_HAVE_PROCLOOP
+        return procMode ? pl.muteState() : 0;
+#else
+        return 0;
+#endif
+    }
+    bool procActive() const { return running && procMode; }
 
     // ---- used by the mixer's YouTube button (no window): start the capture quietly and open YouTube
     static QString findBrowser()
@@ -186,8 +233,15 @@ public:
         args << QStringLiteral("--app=") + url.toString()
              << QStringLiteral("--user-data-dir=") + QDir::toNativeSeparators(profile)
              << QStringLiteral("--window-size=1100,720");
-        QProcess::startDetached(exe, args, QFileInfo(exe).absolutePath());
+        qint64 pid = 0;
+        QProcess::startDetached(exe, args, QFileInfo(exe).absolutePath(), &pid);
         s.setValue("YouTubeBrowser", exe);
+#ifdef KM_HAVE_PROCLOOP
+        // remember the browser process (needed for the "only YouTube" capture); a second launch of the same
+        // profile hands over to the running browser and exits, so keep the old one while it is still alive
+        if (pid > 0 && !ProcessLoopback::alive(DWORD(s.value("YouTubeBrowserPid", 0).toUInt())))
+            s.setValue("YouTubeBrowserPid", quint32(pid));
+#endif
     }
 
     // starts the capture with the saved input (or the first "CABLE" input) when it is not running; no message boxes
@@ -238,13 +292,18 @@ private:
 
     static BOOL CALLBACK recProc(HRECORD, const void *buffer, DWORD length, void *user)
     {
-        YouTubeBridge *b = static_cast<YouTubeBridge *>(user);
-        if (!b->running || !length)
-            return TRUE;
+        static_cast<YouTubeBridge *>(user)->feed(static_cast<const float *>(buffer), int(length / sizeof(float)));
+        return TRUE;
+    }
 
-        // peak meter
-        const float *f = static_cast<const float *>(buffer);
-        const DWORD n = length / sizeof(float);
+    // interleaved float stereo, 48 kHz; n = number of floats (called from the capture thread)
+    void feed(const float *f, int nfloats)
+    {
+        YouTubeBridge *b = this;
+        const DWORD length = DWORD(nfloats) * sizeof(float);
+        if (!b->running || !length)
+            return;
+        const DWORD n = DWORD(nfloats);
         float m = 0.0f;
         for (DWORD i = 0; i < n; i++) {
             const float a = f[i] < 0 ? -f[i] : f[i];
@@ -255,7 +314,7 @@ private:
         if (m > b->diagPeak.load()) b->diagPeak = m;
         if (m > b->stripPeak) b->stripPeak = m;
 
-        const void *data = buffer;
+        const void *data = f;
         DWORD len = length;
         if (b->vr.enabled()) {                 // vocal remover (about 64 ms later than the input)
             if (!b->vrWasOn) { b->vr.reset(); b->vrWasOn = true; }
@@ -268,7 +327,6 @@ private:
         }
         if (len)
             YouTubeRing::get().write(static_cast<const float *>(data), int(len / (2 * sizeof(float))));
-        return TRUE;
     }
 
     void attach()
@@ -283,6 +341,10 @@ private:
         }
     }
 
+#ifdef KM_HAVE_PROCLOOP
+    ProcessLoopback pl;
+#endif
+    bool procMode = false;
     VocalRemover vr;
     std::vector<float> tmp;
     bool vrWasOn = false;
@@ -337,9 +399,9 @@ public:
         g->addWidget(cbInput, 0, 1);
         QPushButton *btnRefresh = new QPushButton(QString::fromUtf8("โหลดรายการใหม่"), gi);
         g->addWidget(btnRefresh, 0, 2);
-        QPushButton *btnLoop = new QPushButton(QString::fromUtf8("ใช้เสียงทั้งระบบ (ไม่ต้องใช้ VB-Cable)"), gi);
-        btnLoop->setToolTip(QString::fromUtf8("ดักเสียงที่ออกลำโพงของ Windows ทั้งหมด ไม่ต้องตั้ง Volume mixer "
-            "แนะนำให้ตั้งเอาต์พุตของ KaraMixer เป็น ASIO หรืออุปกรณ์อื่นที่ไม่ใช่ลำโพงที่ดัก ไม่งั้นเสียงจะวนซ้อน"));
+        QPushButton *btnLoop = new QPushButton(QString::fromUtf8("ใช้เสียงเฉพาะ YouTube (ไม่ต้องใช้ VB-Cable)"), gi);
+        btnLoop->setToolTip(QString::fromUtf8("ดักเฉพาะเสียงของหน้าต่าง YouTube ที่เปิดจาก KaraMixer แล้วปิดเสียงนั้นที่ลำโพง "
+            "เสียงจะออกทางมิกเซอร์เท่านั้น (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป)"));
         g->addWidget(btnLoop, 5, 0, 1, 3);
 
         btnStart = new QPushButton(gi);
@@ -446,17 +508,13 @@ public:
             if (b.active()) { b.stop(); refreshState(); }
             int pick = -1;
             for (int i = 0; i < cbInput->count(); i++)
-                if (cbInput->itemText(i).startsWith(QString::fromUtf8("[ทั้งระบบ]"))) { pick = i; break; }
+                if (cbInput->itemData(i).toInt() == YouTubeBridge::kProcDev) { pick = i; break; }
             if (pick < 0) {
                 QMessageBox::information(this, QStringLiteral("YouTube"),
-                    QString::fromUtf8("ไม่พบอุปกรณ์ดักเสียงทั้งระบบในเครื่องนี้"));
+                    QString::fromUtf8("เครื่องนี้ไม่รองรับการดักเสียงรายโปรแกรม (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป)"));
                 return;
             }
             cbInput->setCurrentIndex(pick);
-            QMessageBox::information(this, QStringLiteral("YouTube"),
-                QString::fromUtf8("โหมดเสียงทั้งระบบดักเสียงทุกอย่างที่ออกลำโพงของ Windows\n"
-                                  "ควรตั้งเอาต์พุตของ KaraMixer เป็น ASIO หรืออุปกรณ์อื่น ไม่ใช่ลำโพงตัวเดียวกันนี้ "
-                                  "มิฉะนั้นเสียงจะวนซ้อน"));
             toggle(true);
         });
         connect(chVocal, &QCheckBox::toggled, this, [this](bool) { applyVocal(); });
@@ -509,7 +567,12 @@ public:
             lastBytes = now;
             const float p = b.takeDiagPeak();
             QString t;
-            if (kbps < 1.0)
+            if (b.procActive() && kbps >= 1.0 && b.muteState() == 2)
+                t = QString::fromUtf8("⚠ Windows เครื่องนี้ไม่ส่งเสียงให้ดักเมื่อปิดเสียงโปรแกรม จึงเปิดเสียงกลับ: จะได้ยินเสียง YouTube จากลำโพงตรงๆ ด้วย "
+                                      "(เสียงที่ผ่านมิกเซอร์ยังคุมได้ แต่ซ้อนกับเสียงตรง) — แนะนำใช้ VB-Cable แทน");
+            else if (b.procActive() && b.muteState() == 1 && p >= 0.0005f)
+                t = QString::fromUtf8("✓ ดักเสียงเฉพาะ YouTube อยู่ และปิดเสียงที่ลำโพงแล้ว: ได้ยินผ่านมิกเซอร์เท่านั้น");
+            else if (kbps < 1.0)
                 t = QString::fromUtf8("⚠ อุปกรณ์รับเสียงไม่ส่งข้อมูลมาเลย: CABLE Output อาจถูกโปรแกรมอื่นใช้อยู่/ถูกปิด/ถูกตั้งแบบเอกสิทธิ์ "
                                       "(ลองกด \"หยุดรับเสียง\" แล้ว \"เริ่มรับเสียง\" ใหม่ หรือปิดโปรแกรมที่ใช้ CABLE Output)");
             else if (p < 0.0005f)
