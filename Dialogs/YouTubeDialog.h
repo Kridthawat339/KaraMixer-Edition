@@ -56,6 +56,32 @@ class YouTubeBridge
 public:
     struct Dev { int index; QString name; };
 
+#ifdef KM_HAVE_PROCLOOP
+    // process id of the browser that owns the YouTube app window (title has no " - Microsoft Edge" / "Google Chrome" suffix,
+    // so an everyday browser tab is not taken); 0 = not found
+    static DWORD findYouTubeWindowPid()
+    {
+        struct Ctx { DWORD pid = 0; } ctx;
+        EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+            if (!IsWindowVisible(h)) return TRUE;
+            wchar_t cls[64] = {};
+            GetClassNameW(h, cls, 63);
+            if (wcscmp(cls, L"Chrome_WidgetWin_1") != 0) return TRUE;
+            wchar_t title[512] = {};
+            GetWindowTextW(h, title, 511);
+            const QString t = QString::fromWCharArray(title);
+            if (!t.contains(QStringLiteral("YouTube"), Qt::CaseInsensitive)) return TRUE;
+            if (t.contains(QStringLiteral("Microsoft") ) || t.contains(QStringLiteral("Google Chrome"))) return TRUE;
+            DWORD pid = 0;
+            GetWindowThreadProcessId(h, &pid);
+            if (!pid) return TRUE;
+            reinterpret_cast<Ctx *>(lp)->pid = pid;
+            return FALSE;
+        }, reinterpret_cast<LPARAM>(&ctx));
+        return ctx.pid;
+    }
+#endif
+
     static constexpr int kProcDev = -2;      // pseudo device: only the sound of the YouTube window opened by KaraMixer
     static QString kProcName() { return QString::fromUtf8("[เฉพาะ YouTube] ดักเสียงจากหน้าต่าง YouTube ของ KaraMixer"); }
 
@@ -91,9 +117,11 @@ public:
 #ifdef KM_HAVE_PROCLOOP
         if (dev == kProcDev) {
             QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-            const DWORD pid = DWORD(st.value("YouTubeBrowserPid", 0).toUInt());
+            // the YouTube window itself tells which browser process owns it (works after a restart / for any launch)
+            DWORD pid = findYouTubeWindowPid();
+            if (!pid) pid = DWORD(st.value("YouTubeBrowserPid", 0).toUInt());
             if (!ProcessLoopback::alive(pid)) {
-                err = QString::fromUtf8("ไม่พบหน้าต่าง YouTube ที่เปิดจาก KaraMixer: กดปุ่ม \"เปิด YouTube\" (หรือปุ่ม YouTube ในมิกเซอร์) ก่อน แล้วค่อยกดปุ่มนี้");
+                err = QString::fromUtf8("ไม่พบหน้าต่าง YouTube ที่เปิดจาก KaraMixer: กดปุ่ม \"เปิด YouTube\" (หรือปุ่ม YouTube ในมิกเซอร์) และรอให้หน้าต่างขึ้นชื่อ YouTube ก่อน แล้วค่อยกดปุ่มนี้");
                 return false;
             }
             YouTubeRing::get().clear();
