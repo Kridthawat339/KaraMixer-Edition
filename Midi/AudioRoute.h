@@ -160,6 +160,10 @@ public:
         HRESULT hr = WindowsCreateString(name, UINT32(wcslen(name)), &cls);
         if (SUCCEEDED(hr)) {
             hr = RoGetActivationFactory(cls, __uuidof(IKmAudioPolicyConfigFactory), reinterpret_cast<void **>(&f));
+            if (FAILED(hr) || !f) {          // older Windows 10 builds: same layout, other interface id
+                static const GUID kOld = { 0x2a59116d, 0x6c4f, 0x45e0, { 0xa7, 0x4f, 0x70, 0x7e, 0x3f, 0xef, 0x92, 0x58 } };
+                hr = RoGetActivationFactory(cls, kOld, reinterpret_cast<void **>(&f));
+            }
             WindowsDeleteString(cls);
         }
         if (FAILED(hr) || !f) {
@@ -187,6 +191,26 @@ public:
         f->Release();
         log(QStringLiteral("route root pid %1 -> %2 : %3 processes").arg(rootPid).arg(endpointId.isEmpty() ? QStringLiteral("(default)") : endpointId).arg(ok));
         if (!ok && error) *error = QStringLiteral("Windows refused the routing");
+        // read it back: does Windows keep what was set?
+        if (ok && !endpointId.isEmpty()) {
+            IKmAudioPolicyConfigFactory *g2 = nullptr;
+            HSTRING c2 = nullptr;
+            if (SUCCEEDED(WindowsCreateString(name, UINT32(wcslen(name)), &c2))) {
+                if (FAILED(RoGetActivationFactory(c2, __uuidof(IKmAudioPolicyConfigFactory), reinterpret_cast<void **>(&g2))) || !g2) {
+                    static const GUID kOld2 = { 0x2a59116d, 0x6c4f, 0x45e0, { 0xa7, 0x4f, 0x70, 0x7e, 0x3f, 0xef, 0x92, 0x58 } };
+                    RoGetActivationFactory(c2, kOld2, reinterpret_cast<void **>(&g2));
+                }
+                WindowsDeleteString(c2);
+            }
+            if (g2) {
+                HSTRING got = nullptr;
+                const HRESULT hg = g2->GetPersistedDefaultAudioEndpoint(rootPid, eRender, eMultimedia, &got);
+                const wchar_t *gp = got ? WindowsGetStringRawBuffer(got, nullptr) : nullptr;
+                log(QStringLiteral("read back: hr=0x%1 value=%2").arg(quint32(hg), 8, 16, QLatin1Char('0')).arg(gp ? QString::fromWCharArray(gp) : QStringLiteral("(empty)")));
+                if (got) WindowsDeleteString(got);
+                g2->Release();
+            }
+        }
         return ok;
     }
 };

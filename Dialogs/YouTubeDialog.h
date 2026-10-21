@@ -596,6 +596,8 @@ public:
             const bool ok = YouTubeBridge::autoRoute(note);
             YouTubeBridge::autoRouteLater();
             if (ok) note += QString::fromUtf8("\nถ้ายังไม่ได้ยิน ให้หยุดวิดีโอแล้วเล่นใหม่");
+            else
+                QDesktopServices::openUrl(QUrl(QStringLiteral("ms-settings:apps-volume")));
         }
         QMessageBox::information(this, QStringLiteral("YouTube"), note);
     }
