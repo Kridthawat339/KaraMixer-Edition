@@ -340,7 +340,7 @@ public:
         QPushButton *btnLoop = new QPushButton(QString::fromUtf8("ใช้เสียงทั้งระบบ (ไม่ต้องใช้ VB-Cable)"), gi);
         btnLoop->setToolTip(QString::fromUtf8("ดักเสียงที่ออกลำโพงของ Windows ทั้งหมด ไม่ต้องตั้ง Volume mixer "
             "แนะนำให้ตั้งเอาต์พุตของ KaraMixer เป็น ASIO หรืออุปกรณ์อื่นที่ไม่ใช่ลำโพงที่ดัก ไม่งั้นเสียงจะวนซ้อน"));
-        g->addWidget(btnLoop, 2, 1, 1, 2);
+        g->addWidget(btnLoop, 5, 0, 1, 3);
 
         btnStart = new QPushButton(gi);
         g->addWidget(btnStart, 1, 1);
