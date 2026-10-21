@@ -60,10 +60,16 @@ public:
     QList<Dev> devices() const
     {
         QList<Dev> out;
+        // WASAPI loopback devices ("what you hear" of an output device): need no virtual cable and no per-app routing
+        BASS_SetConfig(BASS_CONFIG_REC_LOOPBACK, 1);
         BASS_DEVICEINFO di;
         for (int i = 0; BASS_RecordGetDeviceInfo(i, &di); i++)
-            if (di.flags & BASS_DEVICE_ENABLED)
-                out.append({ i, QString::fromUtf8(di.name) });
+            if (di.flags & BASS_DEVICE_ENABLED) {
+                QString n = QString::fromUtf8(di.name);
+                if (di.flags & BASS_DEVICE_LOOPBACK)
+                    n = QString::fromUtf8("[ทั้งระบบ] ") + n;
+                out.append({ i, n });
+            }
         return out;
     }
 
@@ -139,6 +145,10 @@ public:
     float takeStripPeak() { const float v = stripPeak; stripPeak = 0.0f; return v; }
 
     float takePeak() { const float v = peak; peak = 0.0f; return v; }
+
+    // diagnostics for the window: how much data the capture device delivers, and how loud it is
+    unsigned long long bytesReceived() const { return bytesIn.load(); }
+    float takeDiagPeak() { return diagPeak.exchange(0.0f); }
 
     // ---- used by the mixer's YouTube button (no window): start the capture quietly and open YouTube
     static QString findBrowser()
@@ -241,6 +251,8 @@ private:
             if (a > m) m = a;
         }
         if (m > b->peak) b->peak = m;
+        b->bytesIn += length;
+        if (m > b->diagPeak.load()) b->diagPeak = m;
         if (m > b->stripPeak) b->stripPeak = m;
 
         const void *data = buffer;
@@ -282,6 +294,8 @@ private:
     QString devName;
     std::atomic<float> peak{0.0f};
     std::atomic<float> stripPeak{0.0f};
+    std::atomic<unsigned long long> bytesIn{0};
+    std::atomic<float> diagPeak{0.0f};
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -323,6 +337,10 @@ public:
         g->addWidget(cbInput, 0, 1);
         QPushButton *btnRefresh = new QPushButton(QString::fromUtf8("โหลดรายการใหม่"), gi);
         g->addWidget(btnRefresh, 0, 2);
+        QPushButton *btnLoop = new QPushButton(QString::fromUtf8("ใช้เสียงทั้งระบบ (ไม่ต้องใช้ VB-Cable)"), gi);
+        btnLoop->setToolTip(QString::fromUtf8("ดักเสียงที่ออกลำโพงของ Windows ทั้งหมด ไม่ต้องตั้ง Volume mixer "
+            "แนะนำให้ตั้งเอาต์พุตของ KaraMixer เป็น ASIO หรืออุปกรณ์อื่นที่ไม่ใช่ลำโพงที่ดัก ไม่งั้นเสียงจะวนซ้อน"));
+        g->addWidget(btnLoop, 2, 1, 1, 2);
 
         btnStart = new QPushButton(gi);
         g->addWidget(btnStart, 1, 1);
@@ -423,6 +441,24 @@ public:
         // ---- actions
         connect(btnRefresh, &QPushButton::clicked, this, [this]() { fillInputs(cbInput->currentText()); });
         connect(btnStart, &QPushButton::clicked, this, [this]() { toggle(true); });
+        connect(btnLoop, &QPushButton::clicked, this, [this]() {
+            YouTubeBridge &b = YouTubeBridge::get();
+            if (b.active()) { b.stop(); refreshState(); }
+            int pick = -1;
+            for (int i = 0; i < cbInput->count(); i++)
+                if (cbInput->itemText(i).startsWith(QString::fromUtf8("[ทั้งระบบ]"))) { pick = i; break; }
+            if (pick < 0) {
+                QMessageBox::information(this, QStringLiteral("YouTube"),
+                    QString::fromUtf8("ไม่พบอุปกรณ์ดักเสียงทั้งระบบในเครื่องนี้"));
+                return;
+            }
+            cbInput->setCurrentIndex(pick);
+            QMessageBox::information(this, QStringLiteral("YouTube"),
+                QString::fromUtf8("โหมดเสียงทั้งระบบดักเสียงทุกอย่างที่ออกลำโพงของ Windows\n"
+                                  "ควรตั้งเอาต์พุตของ KaraMixer เป็น ASIO หรืออุปกรณ์อื่น ไม่ใช่ลำโพงตัวเดียวกันนี้ "
+                                  "มิฉะนั้นเสียงจะวนซ้อน"));
+            toggle(true);
+        });
         connect(chVocal, &QCheckBox::toggled, this, [this](bool) { applyVocal(); });
         for (QSlider *sl : { slStr, slSharp, slLow, slHigh, slDrum })
             connect(sl, &QSlider::valueChanged, this, [this](int) { applyVocal(); });
@@ -455,6 +491,37 @@ public:
             meter->setValue(pct);
         });
         tm->start(60);
+
+        // what is really arriving from the capture device (so it is clear whether the cable is silent or not delivering)
+        diag = new QLabel(this);
+        diag->setWordWrap(true);
+        v->insertWidget(2, diag);
+        diagTimer = new QTimer(this);
+        connect(diagTimer, &QTimer::timeout, this, [this]() {
+            YouTubeBridge &b = YouTubeBridge::get();
+            if (!b.active()) {
+                diag->setText(QString());
+                lastBytes = b.bytesReceived();
+                return;
+            }
+            const unsigned long long now = b.bytesReceived();
+            const double kbps = double(now - lastBytes) / 1024.0 * 2.0;   // timer = 500 ms
+            lastBytes = now;
+            const float p = b.takeDiagPeak();
+            QString t;
+            if (kbps < 1.0)
+                t = QString::fromUtf8("⚠ อุปกรณ์รับเสียงไม่ส่งข้อมูลมาเลย: CABLE Output อาจถูกโปรแกรมอื่นใช้อยู่/ถูกปิด/ถูกตั้งแบบเอกสิทธิ์ "
+                                      "(ลองกด "หยุดรับเสียง" แล้ว "เริ่มรับเสียง" ใหม่ หรือปิดโปรแกรมที่ใช้ CABLE Output)");
+            else if (p < 0.0005f)
+                t = QString::fromUtf8("⚠ ได้รับข้อมูลจากสาย (%1 KB/วินาที) แต่เป็นความเงียบ: เสียงของ Edge ยังไม่เข้า CABLE Input (ถ้าตั้ง Volume mixer ไม่ได้ผล ให้กดปุ่ม \"ใช้เสียงทั้งระบบ\") — "
+                                      "เช็กว่า YouTube กำลังเล่นอยู่, ใน Volume mixer ช่อง Output ของ Microsoft Edge เป็น CABLE Input "
+                                      "(ตั้งหลังจากเปิดวิดีโอแล้ว และอาจต้องปิดแล้วเปิดหน้าต่าง YouTube ใหม่), และ CABLE ไม่ได้ถูก Mute")
+                        .arg(int(kbps));
+            else
+                t = QString::fromUtf8("✔ มีสัญญาณเข้ามิกเซอร์ (%1 KB/วินาที)").arg(int(kbps));
+            diag->setText(t);
+        });
+        diagTimer->start(500);
     }
 
     ~YouTubeDialog() override
@@ -569,6 +636,9 @@ private:
     QCheckBox *chVocal = nullptr;
     QSlider *slStr = nullptr, *slSharp = nullptr, *slLow = nullptr, *slHigh = nullptr, *slDrum = nullptr;
     QLabel *lbStr = nullptr, *lbSharp = nullptr, *lbLow = nullptr, *lbHigh = nullptr, *lbDrum = nullptr;
+    QLabel *diag = nullptr;
+    QTimer *diagTimer = nullptr;
+    unsigned long long lastBytes = 0;
     QProgressBar *meter = nullptr;
     QLineEdit *edExe = nullptr;
     QTimer *tm = nullptr;
