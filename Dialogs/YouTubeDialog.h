@@ -431,6 +431,13 @@ public:
         btnLoop->setToolTip(QString::fromUtf8("ดักเฉพาะเสียงของหน้าต่าง YouTube ที่เปิดจาก KaraMixer แล้วปิดเสียงนั้นที่ลำโพง "
             "เสียงจะออกทางมิกเซอร์เท่านั้น (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป)"));
         g->addWidget(btnLoop, 5, 0, 1, 3);
+        QCheckBox *chMute = new QCheckBox(QString::fromUtf8("โหมดเฉพาะ YouTube: ปิดเสียงต้นทางที่ลำโพง (ถ้าเสียงตัดเป็นช่วงๆ ให้ปิดตัวเลือกนี้ แล้วกดเริ่มรับเสียงใหม่)"), gi);
+        chMute->setChecked(st.value("YouTubeMuteSource", true).toBool());
+        connect(chMute, &QCheckBox::toggled, this, [](bool on) {
+            QSettings s2(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+            s2.setValue("YouTubeMuteSource", on);
+        });
+        g->addWidget(chMute, 6, 0, 1, 3);
 
         btnStart = new QPushButton(gi);
         g->addWidget(btnStart, 1, 1);
