@@ -42,7 +42,7 @@
 
 #include "Config.h"
 #include "Midi/MidiSynthesizer.h"
-#include "Midi/ProcessLoopback.h"
+#include "Midi/AudioRoute.h"
 #include "Widgets/ProLicense.h"
 #include "Dialogs/VocalRemover.h"
 #include "Midi/YouTubeRing.h"
@@ -56,53 +56,15 @@ class YouTubeBridge
 public:
     struct Dev { int index; QString name; };
 
-#ifdef KM_HAVE_PROCLOOP
-    // process id of the browser that owns the YouTube app window (title has no " - Microsoft Edge" / "Google Chrome" suffix,
-    // so an everyday browser tab is not taken); 0 = not found
-    static DWORD findYouTubeWindowPid()
-    {
-        struct Ctx { DWORD pid = 0; } ctx;
-        EnumWindows([](HWND h, LPARAM lp) -> BOOL {
-            if (!IsWindowVisible(h)) return TRUE;
-            wchar_t cls[64] = {};
-            GetClassNameW(h, cls, 63);
-            if (wcscmp(cls, L"Chrome_WidgetWin_1") != 0) return TRUE;
-            wchar_t title[512] = {};
-            GetWindowTextW(h, title, 511);
-            const QString t = QString::fromWCharArray(title);
-            if (!t.contains(QStringLiteral("YouTube"), Qt::CaseInsensitive)) return TRUE;
-            if (t.contains(QStringLiteral("Microsoft") ) || t.contains(QStringLiteral("Google Chrome"))) return TRUE;
-            DWORD pid = 0;
-            GetWindowThreadProcessId(h, &pid);
-            if (!pid) return TRUE;
-            reinterpret_cast<Ctx *>(lp)->pid = pid;
-            return FALSE;
-        }, reinterpret_cast<LPARAM>(&ctx));
-        return ctx.pid;
-    }
-#endif
-
-    static constexpr int kProcDev = -2;      // pseudo device: only the sound of the YouTube window opened by KaraMixer
-    static QString kProcName() { return QString::fromUtf8("[เฉพาะ YouTube] ดักเสียงจากหน้าต่าง YouTube ของ KaraMixer"); }
-
     static YouTubeBridge &get() { static YouTubeBridge b; return b; }
 
     QList<Dev> devices() const
     {
         QList<Dev> out;
-        // WASAPI loopback devices ("what you hear" of an output device): need no virtual cable and no per-app routing
-        BASS_SetConfig(BASS_CONFIG_REC_LOOPBACK, 1);
-#ifdef KM_HAVE_PROCLOOP
-        out.append({ kProcDev, kProcName() });
-#endif
         BASS_DEVICEINFO di;
         for (int i = 0; BASS_RecordGetDeviceInfo(i, &di); i++)
-            if (di.flags & BASS_DEVICE_ENABLED) {
-                QString n = QString::fromUtf8(di.name);
-                if (di.flags & BASS_DEVICE_LOOPBACK)
-                    n = QString::fromUtf8("[ทั้งระบบ] ") + n;
-                out.append({ i, n });
-            }
+            if (di.flags & BASS_DEVICE_ENABLED)
+                out.append({ i, QString::fromUtf8(di.name) });
         return out;
     }
 
@@ -114,35 +76,6 @@ public:
         stop();
         synth = s;
 
-#ifdef KM_HAVE_PROCLOOP
-        if (dev == kProcDev) {
-            QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-            // the YouTube window itself tells which browser process owns it (works after a restart / for any launch)
-            DWORD pid = findYouTubeWindowPid();
-            if (!pid) pid = DWORD(st.value("YouTubeBrowserPid", 0).toUInt());
-            if (!ProcessLoopback::alive(pid)) {
-                err = QString::fromUtf8("ไม่พบหน้าต่าง YouTube ที่เปิดจาก KaraMixer: กดปุ่ม \"เปิด YouTube\" (หรือปุ่ม YouTube ในมิกเซอร์) และรอให้หน้าต่างขึ้นชื่อ YouTube ก่อน แล้วค่อยกดปุ่มนี้");
-                return false;
-            }
-            YouTubeRing::get().clear();
-            peak = 0.0f;
-            const bool mute = st.value("YouTubeMuteSource", true).toBool();
-            if (!pl.start(pid, [this](const float *d, int n) { feed(d, n); }, mute)) {
-                err = QString::fromUtf8("เริ่มดักเสียงรายโปรแกรมไม่สำเร็จ (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป): ") + pl.lastError();
-                return false;
-            }
-            procMode = true;
-            devName = name;
-            running = true;
-            attach();
-            if (!timer) {
-                timer = new QTimer(qApp);
-                QObject::connect(timer, &QTimer::timeout, qApp, []() { YouTubeBridge::get().attach(); });
-            }
-            timer->start(250);
-            return true;
-        }
-#endif
         if (!BASS_RecordInit(dev) && BASS_ErrorGetCode() != BASS_ERROR_ALREADY) {
             err = QStringLiteral("BASS_RecordInit error %1").arg(BASS_ErrorGetCode());
             return false;
@@ -178,9 +111,6 @@ public:
     {
         if (timer) timer->stop();
         running = false;
-#ifdef KM_HAVE_PROCLOOP
-        if (procMode) { pl.stop(); procMode = false; }
-#endif
         const DWORD r = rec;
         rec = 0;
         if (r) BASS_ChannelStop(r);
@@ -214,16 +144,6 @@ public:
     // diagnostics for the window: how much data the capture device delivers, and how loud it is
     unsigned long long bytesReceived() const { return bytesIn.load(); }
     float takeDiagPeak() { return diagPeak.exchange(0.0f); }
-    // 0 normal, 1 program muted at the speakers (heard only through the mixer), 2 muting is not possible here
-    int muteState() const
-    {
-#ifdef KM_HAVE_PROCLOOP
-        return procMode ? pl.muteState() : 0;
-#else
-        return 0;
-#endif
-    }
-    bool procActive() const { return running && procMode; }
 
     // ---- used by the mixer's YouTube button (no window): start the capture quietly and open YouTube
     static QString findBrowser()
@@ -238,6 +158,42 @@ public:
                 if (!root.isEmpty() && QFileInfo::exists(root + r))
                     return QDir::toNativeSeparators(root + r);
         return QString();
+    }
+
+    // sends the sound of the YouTube window's browser to "CABLE Input" (what the Windows Volume mixer's Output does)
+    static bool autoRoute(QString &note)
+    {
+        QString name;
+        const QString id = AudioRoute::findPlaybackDevice(QStringLiteral("CABLE Input"), &name);
+        if (id.isEmpty()) {
+            note = QString::fromUtf8("ไม่พบ VB-Cable (CABLE Input): ติดตั้ง VB-Cable แล้วรีสตาร์ตเครื่องก่อน");
+            return false;
+        }
+        const DWORD pid = AudioRoute::findYouTubeWindowPid();
+        if (!pid) {
+            note = QString::fromUtf8("ยังไม่พบหน้าต่าง YouTube");
+            return false;
+        }
+        QString err;
+        if (AudioRoute::setOutputForTree(pid, id, &err) <= 0) {
+            note = QString::fromUtf8("Windows ไม่รับการตั้งค่าอัตโนมัติ (") + err + QString::fromUtf8(") ให้ตั้งเองที่ Volume mixer");
+            return false;
+        }
+        note = QString::fromUtf8("ส่งเสียงของ Edge ไปที่ ") + name + QString::fromUtf8(" แล้ว");
+        return true;
+    }
+
+    // the browser starts its sound process a little later: set the routing again a few times after the window opens
+    static void autoRouteLater()
+    {
+        static int gen = 0;
+        const int my = ++gen;
+        for (int d : { 2000, 4000, 7000, 11000, 16000, 24000 })
+            QTimer::singleShot(d, qApp, [my]() {
+                if (my != gen) return;
+                QString n;
+                autoRoute(n);
+            });
     }
 
     // exe empty -> the saved / found browser
@@ -261,15 +217,9 @@ public:
         args << QStringLiteral("--app=") + url.toString()
              << QStringLiteral("--user-data-dir=") + QDir::toNativeSeparators(profile)
              << QStringLiteral("--window-size=1100,720");
-        qint64 pid = 0;
-        QProcess::startDetached(exe, args, QFileInfo(exe).absolutePath(), &pid);
+        QProcess::startDetached(exe, args, QFileInfo(exe).absolutePath());
         s.setValue("YouTubeBrowser", exe);
-#ifdef KM_HAVE_PROCLOOP
-        // remember the browser process (needed for the "only YouTube" capture); a second launch of the same
-        // profile hands over to the running browser and exits, so keep the old one while it is still alive
-        if (pid > 0 && !ProcessLoopback::alive(DWORD(s.value("YouTubeBrowserPid", 0).toUInt())))
-            s.setValue("YouTubeBrowserPid", quint32(pid));
-#endif
+        autoRouteLater();            // sound of the browser -> CABLE Input, without the Volume mixer
     }
 
     // starts the capture with the saved input (or the first "CABLE" input) when it is not running; no message boxes
@@ -320,18 +270,13 @@ private:
 
     static BOOL CALLBACK recProc(HRECORD, const void *buffer, DWORD length, void *user)
     {
-        static_cast<YouTubeBridge *>(user)->feed(static_cast<const float *>(buffer), int(length / sizeof(float)));
-        return TRUE;
-    }
-
-    // interleaved float stereo, 48 kHz; n = number of floats (called from the capture thread)
-    void feed(const float *f, int nfloats)
-    {
-        YouTubeBridge *b = this;
-        const DWORD length = DWORD(nfloats) * sizeof(float);
+        YouTubeBridge *b = static_cast<YouTubeBridge *>(user);
         if (!b->running || !length)
-            return;
-        const DWORD n = DWORD(nfloats);
+            return TRUE;
+
+        // peak meter
+        const float *f = static_cast<const float *>(buffer);
+        const DWORD n = length / sizeof(float);
         float m = 0.0f;
         for (DWORD i = 0; i < n; i++) {
             const float a = f[i] < 0 ? -f[i] : f[i];
@@ -342,7 +287,7 @@ private:
         if (m > b->diagPeak.load()) b->diagPeak = m;
         if (m > b->stripPeak) b->stripPeak = m;
 
-        const void *data = f;
+        const void *data = buffer;
         DWORD len = length;
         if (b->vr.enabled()) {                 // vocal remover (about 64 ms later than the input)
             if (!b->vrWasOn) { b->vr.reset(); b->vrWasOn = true; }
@@ -355,6 +300,7 @@ private:
         }
         if (len)
             YouTubeRing::get().write(static_cast<const float *>(data), int(len / (2 * sizeof(float))));
+        return TRUE;
     }
 
     void attach()
@@ -369,10 +315,6 @@ private:
         }
     }
 
-#ifdef KM_HAVE_PROCLOOP
-    ProcessLoopback pl;
-#endif
-    bool procMode = false;
     VocalRemover vr;
     std::vector<float> tmp;
     bool vrWasOn = false;
@@ -412,6 +354,7 @@ public:
             "<b>ตั้งค่าครั้งแรก (ทำครั้งเดียว)</b><br>"
             "1) ติดตั้งสายเสียงเสมือน <b>VB-Cable</b> (ปุ่ม \"ดาวน์โหลด VB-Cable\" ด้านล่าง) แล้วรีสตาร์ตเครื่อง<br>"
             "2) กดปุ่ม <b>YouTube</b> ในมิกเซอร์ จะเปิดหน้า YouTube ให้ล็อกอินได้เลย (ล็อกอินครั้งเดียว ระบบจำให้)<br>"
+            "<b>ทางลัด:</b> ติดตั้ง VB-Cable แล้วกดปุ่ม <b>ตั้งค่าอัตโนมัติ</b> ด้านล่าง (ทำข้อ 3–4 ให้เอง) หรือทำเองตามข้อ 3–4<br>"
             "3) ตั้งให้เสียงของ <b>Microsoft Edge</b> ออกที่ <b>CABLE Input</b>: Windows Settings &gt; System &gt; Sound &gt; Volume mixer "
             "(ต้องเปิดเสียงใน YouTube ก่อน โปรแกรมถึงจะขึ้นในรายการ)<br>"
             "4) เลือกอินพุต <b>CABLE Output</b> ด้านล่าง กด \"เริ่มรับเสียง\" เสียงจะออกที่แทรค <b>YouTube</b> และ Master"), this);
@@ -427,17 +370,6 @@ public:
         g->addWidget(cbInput, 0, 1);
         QPushButton *btnRefresh = new QPushButton(QString::fromUtf8("โหลดรายการใหม่"), gi);
         g->addWidget(btnRefresh, 0, 2);
-        QPushButton *btnLoop = new QPushButton(QString::fromUtf8("ใช้เสียงเฉพาะ YouTube (ไม่ต้องใช้ VB-Cable)"), gi);
-        btnLoop->setToolTip(QString::fromUtf8("ดักเฉพาะเสียงของหน้าต่าง YouTube ที่เปิดจาก KaraMixer แล้วปิดเสียงนั้นที่ลำโพง "
-            "เสียงจะออกทางมิกเซอร์เท่านั้น (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป)"));
-        g->addWidget(btnLoop, 5, 0, 1, 3);
-        QCheckBox *chMute = new QCheckBox(QString::fromUtf8("โหมดเฉพาะ YouTube: ปิดเสียงต้นทางที่ลำโพง (ถ้าเสียงตัดเป็นช่วงๆ ให้ปิดตัวเลือกนี้ แล้วกดเริ่มรับเสียงใหม่)"), gi);
-        chMute->setChecked(st.value("YouTubeMuteSource", true).toBool());
-        connect(chMute, &QCheckBox::toggled, this, [](bool on) {
-            QSettings s2(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
-            s2.setValue("YouTubeMuteSource", on);
-        });
-        g->addWidget(chMute, 6, 0, 1, 3);
 
         btnStart = new QPushButton(gi);
         g->addWidget(btnStart, 1, 1);
@@ -513,6 +445,15 @@ public:
         hb->addWidget(btnSound);
         hb->addWidget(btnWeb);
         e->addLayout(hb, 1, 0, 1, 3);
+        QHBoxLayout *hb2 = new QHBoxLayout();
+        QPushButton *btnAuto = new QPushButton(QString::fromUtf8("ตั้งค่าอัตโนมัติ (VB-Cable → Edge → มิกเซอร์)"), ge);
+        btnAuto->setMinimumHeight(34);
+        btnAuto->setToolTip(QString::fromUtf8("เลือก CABLE Output เป็นอินพุต เริ่มรับเสียง และตั้งให้เสียงของ Edge ออกที่ CABLE Input ให้เอง (ไม่ต้องเข้า Volume mixer) "
+                                              "ต้องติดตั้ง VB-Cable ก่อน"));
+        QPushButton *btnUndo = new QPushButton(QString::fromUtf8("คืนเสียง Edge ไปลำโพงปกติ"), ge);
+        hb2->addWidget(btnAuto, 1);
+        hb2->addWidget(btnUndo);
+        e->addLayout(hb2, 2, 0, 1, 3);
         v->addWidget(ge);
 
         QLabel *note = new QLabel(QString::fromUtf8(
@@ -538,20 +479,6 @@ public:
         // ---- actions
         connect(btnRefresh, &QPushButton::clicked, this, [this]() { fillInputs(cbInput->currentText()); });
         connect(btnStart, &QPushButton::clicked, this, [this]() { toggle(true); });
-        connect(btnLoop, &QPushButton::clicked, this, [this]() {
-            YouTubeBridge &b = YouTubeBridge::get();
-            if (b.active()) { b.stop(); refreshState(); }
-            int pick = -1;
-            for (int i = 0; i < cbInput->count(); i++)
-                if (cbInput->itemData(i).toInt() == YouTubeBridge::kProcDev) { pick = i; break; }
-            if (pick < 0) {
-                QMessageBox::information(this, QStringLiteral("YouTube"),
-                    QString::fromUtf8("เครื่องนี้ไม่รองรับการดักเสียงรายโปรแกรม (ต้องใช้ Windows 10 เวอร์ชัน 2004 ขึ้นไป)"));
-                return;
-            }
-            cbInput->setCurrentIndex(pick);
-            toggle(true);
-        });
         connect(chVocal, &QCheckBox::toggled, this, [this](bool) { applyVocal(); });
         for (QSlider *sl : { slStr, slSharp, slLow, slHigh, slDrum })
             connect(sl, &QSlider::valueChanged, this, [this](int) { applyVocal(); });
@@ -567,6 +494,18 @@ public:
                 edExe->setText(f);
         });
         connect(btnOpen, &QPushButton::clicked, this, [this]() { launchYouTube(); });
+        connect(btnAuto, &QPushButton::clicked, this, [this]() { autoSetup(); });
+        connect(btnUndo, &QPushButton::clicked, this, [this]() {
+            const DWORD pid = AudioRoute::findYouTubeWindowPid();
+            if (!pid) {
+                QMessageBox::information(this, QStringLiteral("YouTube"),
+                    QString::fromUtf8("ต้องเปิดหน้าต่าง YouTube ไว้ก่อน แล้วกดปุ่มนี้ (หรือเข้า Volume mixer ของ Windows แล้วตั้ง Output ของ Edge เป็น Default)"));
+                return;
+            }
+            AudioRoute::setOutputForTree(pid, QString());
+            QMessageBox::information(this, QStringLiteral("YouTube"),
+                QString::fromUtf8("คืนค่าแล้ว: เสียงของ Edge กลับไปออกอุปกรณ์เริ่มต้นของ Windows (ปิดแล้วเปิด Edge ใหม่ถ้ายังไม่เปลี่ยน)"));
+        });
         connect(btnSound, &QPushButton::clicked, this, []() {
             QDesktopServices::openUrl(QUrl(QStringLiteral("ms-settings:apps-volume")));
         });
@@ -602,16 +541,11 @@ public:
             lastBytes = now;
             const float p = b.takeDiagPeak();
             QString t;
-            if (b.procActive() && kbps >= 1.0 && b.muteState() == 2)
-                t = QString::fromUtf8("⚠ Windows เครื่องนี้ไม่ส่งเสียงให้ดักเมื่อปิดเสียงโปรแกรม จึงเปิดเสียงกลับ: จะได้ยินเสียง YouTube จากลำโพงตรงๆ ด้วย "
-                                      "(เสียงที่ผ่านมิกเซอร์ยังคุมได้ แต่ซ้อนกับเสียงตรง) — แนะนำใช้ VB-Cable แทน");
-            else if (b.procActive() && b.muteState() == 1 && p >= 0.0005f)
-                t = QString::fromUtf8("✓ ดักเสียงเฉพาะ YouTube อยู่ และปิดเสียงที่ลำโพงแล้ว: ได้ยินผ่านมิกเซอร์เท่านั้น");
-            else if (kbps < 1.0)
+            if (kbps < 1.0)
                 t = QString::fromUtf8("⚠ อุปกรณ์รับเสียงไม่ส่งข้อมูลมาเลย: CABLE Output อาจถูกโปรแกรมอื่นใช้อยู่/ถูกปิด/ถูกตั้งแบบเอกสิทธิ์ "
                                       "(ลองกด \"หยุดรับเสียง\" แล้ว \"เริ่มรับเสียง\" ใหม่ หรือปิดโปรแกรมที่ใช้ CABLE Output)");
             else if (p < 0.0005f)
-                t = QString::fromUtf8("⚠ ได้รับข้อมูลจากสาย (%1 KB/วินาที) แต่เป็นความเงียบ: เสียงของ Edge ยังไม่เข้า CABLE Input (ถ้าตั้ง Volume mixer ไม่ได้ผล ให้กดปุ่ม \"ใช้เสียงทั้งระบบ\") — "
+                t = QString::fromUtf8("⚠ ได้รับข้อมูลจากสาย (%1 KB/วินาที) แต่เป็นความเงียบ: เสียงของ Edge ยังไม่เข้า CABLE Input — "
                                       "เช็กว่า YouTube กำลังเล่นอยู่, ใน Volume mixer ช่อง Output ของ Microsoft Edge เป็น CABLE Input "
                                       "(ตั้งหลังจากเปิดวิดีโอแล้ว และอาจต้องปิดแล้วเปิดหน้าต่าง YouTube ใหม่), และ CABLE ไม่ได้ถูก Mute")
                         .arg(int(kbps));
@@ -628,6 +562,42 @@ public:
         s.setValue("YouTubeBrowser", edExe->text());
         if (!cbInput->currentText().isEmpty())
             s.setValue("YouTubeInput", cbInput->currentText());
+    }
+
+    // one button: CABLE Output as the input + start capture + Edge's sound -> CABLE Input
+    void autoSetup()
+    {
+        if (AudioRoute::findPlaybackDevice(QStringLiteral("CABLE Input")).isEmpty()) {
+            if (QMessageBox::question(this, QStringLiteral("YouTube"),
+                    QString::fromUtf8("ยังไม่พบ VB-Cable ในเครื่องนี้\nต้องติดตั้ง VB-Cable แล้วรีสตาร์ตเครื่องก่อน (ติดตั้งครั้งเดียว) เปิดหน้าดาวน์โหลดเลยไหม?"))
+                == QMessageBox::Yes)
+                QDesktopServices::openUrl(QUrl(QStringLiteral("https://vb-audio.com/Cable/")));
+            return;
+        }
+        YouTubeBridge &b = YouTubeBridge::get();
+        if (b.active()) { b.stop(); }
+        fillInputs(QString());
+        int pick = -1;
+        for (int i = 0; i < cbInput->count(); i++)
+            if (cbInput->itemText(i).contains(QStringLiteral("CABLE Output"), Qt::CaseInsensitive)) { pick = i; break; }
+        if (pick < 0) {
+            QMessageBox::information(this, QStringLiteral("YouTube"),
+                QString::fromUtf8("ไม่พบอินพุต CABLE Output: รีสตาร์ตเครื่องหลังติดตั้ง VB-Cable แล้วลองใหม่"));
+            return;
+        }
+        cbInput->setCurrentIndex(pick);
+        toggle(true);
+
+        QString note;
+        if (AudioRoute::findYouTubeWindowPid() == 0) {
+            openBrowser();                       // opens YouTube and sets the routing when its sound process is up
+            note = QString::fromUtf8("เปิด YouTube แล้ว: เสียงจะเข้ามิกเซอร์ภายในไม่กี่วินาที (เปิดวิดีโอให้เล่น)");
+        } else {
+            const bool ok = YouTubeBridge::autoRoute(note);
+            YouTubeBridge::autoRouteLater();
+            if (ok) note += QString::fromUtf8("\nถ้ายังไม่ได้ยิน ให้หยุดวิดีโอแล้วเล่นใหม่");
+        }
+        QMessageBox::information(this, QStringLiteral("YouTube"), note);
     }
 
     // the mixer's YouTube button: start the capture (silently, when the virtual cable is there) and open YouTube
