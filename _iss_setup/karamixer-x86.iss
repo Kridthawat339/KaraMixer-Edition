@@ -1,10 +1,10 @@
 ; KaraMixer Edition - Inno Setup script
 ; Build with (from repository root, after the app is built and deployed):
-;   iscc /DAppVersion=3.1.1 _iss_setup\karamixer-x86.iss
+;   iscc /DAppVersion=4.0.0 _iss_setup\karamixer-x86.iss
 ; Expected layout:  deploy\x86\  (KaraMixer.exe + Qt/BASS dlls, see .github\workflows\build-windows.yml)
 
 #ifndef AppVersion
-  #define AppVersion "3.1.1"
+  #define AppVersion "4.0.0"
 #endif
 #define MyAppName "KaraMixer Edition"
 #define MyAppPublisher "Buai Music"

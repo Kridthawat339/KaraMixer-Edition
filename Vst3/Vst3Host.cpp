@@ -18,6 +18,7 @@
 #include "pluginterfaces/vst/vsttypes.h"
 
 #include <cstring>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
@@ -44,6 +45,29 @@ namespace vst3host {
 // ---------------------------------------------------------------------------
 // small helpers
 // ---------------------------------------------------------------------------
+
+// diagnostics: ~/.KaraMixer/vst3.log (same file as the load failures)
+static void vlog(const char *fmt, ...)
+{
+#ifdef _WIN32
+    const char *home = std::getenv("USERPROFILE");
+    if (!home) return;
+    std::string f = std::string(home) + "\\.KaraMixer\\vst3.log";
+    FILE *fp = std::fopen(f.c_str(), "ab");
+    if (!fp) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    std::fprintf(fp, "%04d-%02d-%02d %02d:%02d:%02d  [host] ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(fp, fmt, ap);
+    va_end(ap);
+    std::fprintf(fp, "\r\n");
+    std::fclose(fp);
+#else
+    (void)fmt;
+#endif
+}
 
 static uint32_t hashUid(const char *tuid16)
 {
@@ -470,6 +494,10 @@ public:
     ParamChanges inParams, outParams;
     ProcessContext ctx;
     int64 samplePos = 0;
+    int diagBlocks = 0, diagNotes = 0, diagBad = 0;
+    float diagPeak = 0.0f;
+    bool diagDone = false;
+    std::string diagName;
 
     volatile bool bypassed = false;
 
@@ -774,8 +802,9 @@ Plugin *Plugin::load(const std::string &fullPathUtf8, bool wantInstrument,
         }
         if (d->numInBuses > 0) inArr[0] = SpeakerArr::kStereo;
         outArr[0] = SpeakerArr::kStereo;
-        d->processor->setBusArrangements(d->numInBuses ? inArr.data() : nullptr, d->numInBuses,
-                                         outArr.data(), d->numOutBuses);
+        const tresult rArr = d->processor->setBusArrangements(d->numInBuses ? inArr.data() : nullptr, d->numInBuses,
+                                                              outArr.data(), d->numOutBuses);
+        vlog("%s: buses in=%d out=%d, setBusArrangements(stereo)=0x%x", picked.name.c_str(), d->numInBuses, d->numOutBuses, (unsigned)rArr);
 
         SpeakerArrangement a;
         if (d->numInBuses > 0 && d->processor->getBusArrangement(kInput, 0, a) == kResultOk)
@@ -807,7 +836,10 @@ Plugin *Plugin::load(const std::string &fullPathUtf8, bool wantInstrument,
     if (d->component->setActive(true) != kResultOk)
         return fail("setActive failed");
     d->active = true;
-    d->processor->setProcessing(true);
+    const tresult rProc = d->processor->setProcessing(true);
+    d->diagName = picked.name;
+    vlog("%s: loaded (%s), channels in=%d out=%d, rate=%.0f, setProcessing=0x%x", picked.name.c_str(),
+         picked.isInstrument ? "instrument" : "effect", d->inCh, d->outCh, d->sampleRate, (unsigned)rProc);
 
     // --- buffers ---
     d->inBuf.assign((size_t)std::max(d->inCh, 0), std::vector<float>(Impl::kMaxBlock));
@@ -951,6 +983,19 @@ void Plugin::process(const float *in, float *out, int frames, int hostChans)
 
         tresult r = m->processor->process(data);
         m->samplePos += n;
+        if (!m->diagDone && (!m->info.isInstrument || m->diagNotes > 0)) {      // instruments: count from the first note
+            if (r != kResultOk && r != kResultTrue && m->diagBad++ < 3)
+                vlog("%s: process() returned 0x%x", m->diagName.c_str(), (unsigned)r);
+            for (int i = 0; i < n; i++) {
+                const float a0 = m->outBuf[0][(size_t)i] < 0 ? -m->outBuf[0][(size_t)i] : m->outBuf[0][(size_t)i];
+                if (a0 > m->diagPeak) m->diagPeak = a0;
+            }
+            if (++m->diagBlocks >= 600) {
+                m->diagDone = true;
+                vlog("%s: first %d blocks: output peak %.5f, notes sent %d, process errors %d", m->diagName.c_str(),
+                     m->diagBlocks, (double)m->diagPeak, m->diagNotes, m->diagBad);
+            }
+        }
 
         // --- planar to interleaved ---
         float *dst = out + (size_t)done * hostChans;
@@ -989,6 +1034,7 @@ void Plugin::noteOn(int ch, int note, int velocity)
     e.noteOn.noteId = -1;
     e.noteOn.tuning = 0.f;
     d->pushEvent(e);
+    d->diagNotes++;
     std::lock_guard<std::mutex> g(d->lock);
     d->activeNotes.insert((ch << 8) | note);
 }
