@@ -156,7 +156,7 @@ public:
     void setBusGroup(InstrumentType t, int group);
     void setVolume(InstrumentType t, int volume);
     void setPan(InstrumentType t, int pan);
-    void setReverbStrong(bool strong);               // false = 1.4.6 Final strength (tight), true = v3 stronger / longer tail
+    void setReverbStrong(bool strong);               // false = tight, true = stronger / longer tail
     bool isReverbStrong() const { return reverbStrong; }
     void setReverb(InstrumentType t, int level);   // 0 = dry, 100 = very wet
     double trim(InstrumentType t) { return instMap[t].trimDb; }

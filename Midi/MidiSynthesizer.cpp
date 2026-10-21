@@ -1753,7 +1753,7 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
         rv->setWetMix(3.0f * std::pow(k, 0.85f));
         rv->setRoomSize(0.7f + 0.25f * k);
         rv->setDamp(0.35f);
-    } else {                    // 1.4.6 Final: tight and short
+    } else {                    // tight and short
         rv->setWetMix(1.6f * k);
         rv->setRoomSize(0.75f);
         rv->setDamp(0.45f);

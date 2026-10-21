@@ -98,9 +98,10 @@ void SwitchButton::paintEvent(QPaintEvent *)
     QColor track, border, text;
     if (_on)
     {
-        track = dark ? QColor(0x39, 0xff, 0x88) : QColor(0x10, 0xc5, 0x5a);
-        border = track.darker(120);
-        text = dark ? QColor(0x06, 0x2b, 0x14) : QColor(Qt::white);
+        // follows the selected theme (the same accent colour as the checked boxes / buttons)
+        track = palette().color(QPalette::Highlight);
+        border = track.darker(125);
+        text = palette().color(QPalette::HighlightedText);
     }
     else
     {
