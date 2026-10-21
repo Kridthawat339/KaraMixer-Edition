@@ -98,6 +98,19 @@ jobs:
           New-Item -ItemType Directory -Force "$d\languages" | Out-Null
           Copy-Item languages\en.qm "$d\languages"
           windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$d\KaraMixer.exe"
+          # app-local copy of the newest Visual C++ runtime DLLs (the program is built with the newest compiler and needs a
+          # new msvcp140/vcruntime140: Windows 10 PCs with an older runtime would not start it at all)
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          if ($vs) {
+            $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt" -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($ver) {
+              $crtDir = Get-ChildItem "$vs\VC\Redist\MSVC\$($ver.Trim())\$arch\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($crtDir) {
+                Copy-Item "$($crtDir.FullName)\*.dll" $d -Force
+                Write-Host "copied Visual C++ runtime from $($crtDir.FullName)"
+              } else { Write-Host "WARNING: CRT folder not found" }
+            }
+          }
           Invoke-WebRequest "https://aka.ms/vs/17/release/vc_redist.$arch.exe" -OutFile "deploy\VC_redist.$arch.exe"
 
       - name: Build installer (Inno Setup)

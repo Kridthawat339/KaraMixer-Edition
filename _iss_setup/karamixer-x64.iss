@@ -44,7 +44,7 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /passive /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: waituntilterminated; Check: VC2017RedistNeedsInstall
+Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: waituntilterminated; Check: VC2017RedistNeedsInstall
 ; YouTube (PRO) needs a virtual audio cable. They are third-party products with their own licences,
 ; so they are NOT bundled: the finish page offers to open the official download pages instead.
 Filename: "https://vb-audio.com/Cable/"; Flags: shellexec nowait postinstall skipifsilent unchecked; Description: "Open the VB-Cable (virtual audio cable) download page - needed for the YouTube function (PRO)"
@@ -68,7 +68,7 @@ begin
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version) then
   begin
     Log('VC Redist Version check : found ' + Version);
-    Result := (CompareStr(Version, 'v14.23.27820.00') < 0);
+    Result := True;   // always run the (small, quiet) runtime installer: the program needs a recent runtime (14.40+)
   end
   else
     Result := True;
