@@ -120,6 +120,7 @@ public:
             BASS_RecordFree();
         }
         peak = 0.0f;
+        restoreDefaultOutput();                           // Windows' default output back as it was
     }
 
     VocalRemover &vocal() { return vr; }
@@ -160,7 +161,18 @@ public:
         return QString();
     }
 
-    // sends the sound of the YouTube window's browser to "CABLE Input" (what the Windows Volume mixer's Output does)
+    // KaraMixer's own output follows the Windows default device (then switching the default would feed the sound back)
+    static bool outputFollowsDefault()
+    {
+        const DWORD d = BASS_GetDevice();
+        if (d == (DWORD)-1) return false;
+        BASS_DEVICEINFO di;
+        if (!BASS_GetDeviceInfo(d, &di)) return false;
+        return (di.flags & BASS_DEVICE_DEFAULT) != 0;
+    }
+
+    // Edge's sound -> "CABLE Input": CABLE Input becomes the Windows default playback device (the previous default is
+    // remembered and put back when the capture stops / the program closes). Needs no per-app setting of Windows.
     static bool autoRoute(QString &note)
     {
         QString name;
@@ -169,18 +181,45 @@ public:
             note = QString::fromUtf8("ไม่พบ VB-Cable (CABLE Input): ติดตั้ง VB-Cable แล้วรีสตาร์ตเครื่องก่อน");
             return false;
         }
-        const DWORD pid = AudioRoute::findYouTubeWindowPid();
-        if (!pid) {
-            note = QString::fromUtf8("ยังไม่พบหน้าต่าง YouTube");
+        QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+        const QString cur = AudioRoute::defaultPlaybackId();
+        if (cur == id) {
+            note = QString::fromUtf8("CABLE Input เป็นเอาต์พุตเริ่มต้นของ Windows อยู่แล้ว");
+            return true;
+        }
+        if (outputFollowsDefault()) {
+            note = QString::fromUtf8("เอาต์พุตของ KaraMixer ตั้งเป็น \"Default\" (ตามอุปกรณ์เริ่มต้นของ Windows) ถ้าเปลี่ยนจะเกิดเสียงวน: "
+                                     "ไปที่ Settings ของ KaraMixer เลือกเอาต์พุตเป็นลำโพงจริง (ระบุชื่ออุปกรณ์) หรือ ASIO ก่อน แล้วกดปุ่มนี้ใหม่");
             return false;
         }
+        if (!cur.isEmpty() && st.value("YouTubePrevDefaultOut", "").toString().isEmpty())
+            st.setValue("YouTubePrevDefaultOut", cur);             // so it can be put back (also after a crash)
         QString err;
-        if (AudioRoute::setOutputForTree(pid, id, &err) <= 0) {
-            note = QString::fromUtf8("Windows ไม่รับการตั้งค่าอัตโนมัติ (") + err + QString::fromUtf8(") ให้ตั้งเองที่ Volume mixer");
+        if (!AudioRoute::setDefaultPlayback(id, &err)) {
+            st.remove("YouTubePrevDefaultOut");
+            note = QString::fromUtf8("Windows ไม่ยอมเปลี่ยนอุปกรณ์เริ่มต้น (") + err + QString::fromUtf8(") ให้ตั้ง CABLE Input เป็น Default เองที่ Settings > System > Sound");
             return false;
         }
-        note = QString::fromUtf8("ส่งเสียงของ Edge ไปที่ ") + name + QString::fromUtf8(" แล้ว");
+        static bool hooked = false;
+        if (!hooked) {
+            hooked = true;
+            QObject::connect(qApp, &QCoreApplication::aboutToQuit, qApp, []() { YouTubeBridge::restoreDefaultOutput(); });
+        }
+        note = QString::fromUtf8("ตั้ง ") + name + QString::fromUtf8(" เป็นเอาต์พุตเริ่มต้นของ Windows แล้ว (เสียงโปรแกรมอื่นของ Windows จะเข้ามิกเซอร์ด้วย จนกว่าจะหยุดรับเสียง)");
         return true;
+    }
+
+    // puts the Windows default playback device back as it was before autoRoute(); true when something was restored
+    static bool restoreDefaultOutput()
+    {
+        QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
+        const QString prev = st.value("YouTubePrevDefaultOut", "").toString();
+        if (prev.isEmpty())
+            return false;
+        st.remove("YouTubePrevDefaultOut");
+        if (!AudioRoute::playbackDeviceExists(prev))
+            return false;
+        return AudioRoute::setDefaultPlayback(prev);
     }
 
     // the browser starts its sound process a little later: set the routing again a few times after the window opens
@@ -190,7 +229,7 @@ public:
         const int my = ++gen;
         for (int d : { 2000, 4000, 7000, 11000, 16000, 24000 })
             QTimer::singleShot(d, qApp, [my]() {
-                if (my != gen) return;
+                if (my != gen || !YouTubeBridge::get().active()) return;      // only while the capture is running
                 QString n;
                 autoRoute(n);
             });
@@ -260,7 +299,10 @@ public:
         for (const Dev &d : b.devices())
             if (d.name == want) {
                 QString err;
-                b.start(d.index, d.name, s, err);
+                if (b.start(d.index, d.name, s, err)) {
+                    QString n;
+                    autoRoute(n);                    // the capture was switched on to start with the program
+                }
                 return;
             }
     }
@@ -448,9 +490,9 @@ public:
         QHBoxLayout *hb2 = new QHBoxLayout();
         QPushButton *btnAuto = new QPushButton(QString::fromUtf8("ตั้งค่าอัตโนมัติ (VB-Cable → Edge → มิกเซอร์)"), ge);
         btnAuto->setMinimumHeight(34);
-        btnAuto->setToolTip(QString::fromUtf8("เลือก CABLE Output เป็นอินพุต เริ่มรับเสียง และตั้งให้เสียงของ Edge ออกที่ CABLE Input ให้เอง (ไม่ต้องเข้า Volume mixer) "
+        btnAuto->setToolTip(QString::fromUtf8("เลือก CABLE Output เป็นอินพุต เริ่มรับเสียง และตั้ง CABLE Input เป็นเอาต์พุตเริ่มต้นของ Windows ให้เอง (ไม่ต้องเข้า Volume mixer) "
                                               "ต้องติดตั้ง VB-Cable ก่อน"));
-        QPushButton *btnUndo = new QPushButton(QString::fromUtf8("คืนเสียง Edge ไปลำโพงปกติ"), ge);
+        QPushButton *btnUndo = new QPushButton(QString::fromUtf8("คืนเอาต์พุต Windows เป็นเดิม"), ge);
         hb2->addWidget(btnAuto, 1);
         hb2->addWidget(btnUndo);
         e->addLayout(hb2, 2, 0, 1, 3);
@@ -496,15 +538,10 @@ public:
         connect(btnOpen, &QPushButton::clicked, this, [this]() { launchYouTube(); });
         connect(btnAuto, &QPushButton::clicked, this, [this]() { autoSetup(); });
         connect(btnUndo, &QPushButton::clicked, this, [this]() {
-            const DWORD pid = AudioRoute::findYouTubeWindowPid();
-            if (!pid) {
-                QMessageBox::information(this, QStringLiteral("YouTube"),
-                    QString::fromUtf8("ต้องเปิดหน้าต่าง YouTube ไว้ก่อน แล้วกดปุ่มนี้ (หรือเข้า Volume mixer ของ Windows แล้วตั้ง Output ของ Edge เป็น Default)"));
-                return;
-            }
-            AudioRoute::setOutputForTree(pid, QString());
+            const bool was = YouTubeBridge::restoreDefaultOutput();
             QMessageBox::information(this, QStringLiteral("YouTube"),
-                QString::fromUtf8("คืนค่าแล้ว: เสียงของ Edge กลับไปออกอุปกรณ์เริ่มต้นของ Windows (ปิดแล้วเปิด Edge ใหม่ถ้ายังไม่เปลี่ยน)"));
+                was ? QString::fromUtf8("คืนอุปกรณ์เอาต์พุตเริ่มต้นของ Windows กลับเป็นเดิมแล้ว")
+                    : QString::fromUtf8("ไม่มีค่าเดิมที่ต้องคืน (ถ้าเสียงยังเข้า CABLE ให้ตั้ง Default เองที่ Settings > System > Sound)"));
         });
         connect(btnSound, &QPushButton::clicked, this, []() {
             QDesktopServices::openUrl(QUrl(QStringLiteral("ms-settings:apps-volume")));

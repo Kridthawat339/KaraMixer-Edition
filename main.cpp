@@ -133,6 +133,7 @@ int main(int argc, char *argv[])
     splash->finish(mixer);
 
     #ifndef __linux__
+    YouTubeBridge::restoreDefaultOutput();                           // the Windows default output left changed by a crash
     YouTubeBridge::autoStart(w.midiPlayer()->midiSynthesizer());     // YouTube input (PRO), when switched on in its window
     #endif
 

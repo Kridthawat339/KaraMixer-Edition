@@ -53,9 +53,94 @@ public:
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
 
+// Windows' "set default device" interface (used by most sound-switching tools; stable across Windows versions)
+MIDL_INTERFACE("f8679f50-850a-41cf-9c72-430f290290c8")
+IKmPolicyConfig : public IUnknown
+{
+public:
+    virtual HRESULT STDMETHODCALLTYPE GetMixFormat() = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDeviceFormat() = 0;
+    virtual HRESULT STDMETHODCALLTYPE ResetDeviceFormat() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetDeviceFormat() = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetProcessingPeriod() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetProcessingPeriod() = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetShareMode() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetShareMode() = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetPropertyValue() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetPropertyValue() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetDefaultEndpoint(PCWSTR deviceId, ERole role) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetEndpointVisibility(PCWSTR deviceId, INT visible) = 0;
+};
+
 class AudioRoute
 {
 public:
+    // endpoint id of the current Windows default playback device (empty = unknown)
+    static QString defaultPlaybackId()
+    {
+        QString result;
+        IMMDeviceEnumerator *en = nullptr;
+        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                    reinterpret_cast<void **>(&en))) || !en)
+            return result;
+        IMMDevice *d = nullptr;
+        if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &d)) && d) {
+            LPWSTR id = nullptr;
+            if (SUCCEEDED(d->GetId(&id)) && id) {
+                result = QString::fromWCharArray(id);
+                CoTaskMemFree(id);
+            }
+            d->Release();
+        }
+        en->Release();
+        return result;
+    }
+
+    // does the endpoint exist and is it active?
+    static bool playbackDeviceExists(const QString &id)
+    {
+        if (id.isEmpty()) return false;
+        bool ok = false;
+        IMMDeviceEnumerator *en = nullptr;
+        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                    reinterpret_cast<void **>(&en))) || !en)
+            return false;
+        IMMDevice *d = nullptr;
+        const std::wstring w = id.toStdWString();
+        if (SUCCEEDED(en->GetDevice(w.c_str(), &d)) && d) {
+            DWORD st = 0;
+            ok = SUCCEEDED(d->GetState(&st)) && st == DEVICE_STATE_ACTIVE;
+            d->Release();
+        }
+        en->Release();
+        return ok;
+    }
+
+    // makes a playback device the Windows default (all roles); returns true when Windows reports it as the default
+    static bool setDefaultPlayback(const QString &id, QString *error = nullptr)
+    {
+        static const CLSID kClient = { 0x870af99c, 0x171d, 0x4f9e, { 0xaf, 0x0d, 0xe6, 0x3d, 0xf4, 0x0c, 0x2b, 0xc9 } };
+        IKmPolicyConfig *pc = nullptr;
+        const HRESULT hr = CoCreateInstance(kClient, nullptr, CLSCTX_ALL, __uuidof(IKmPolicyConfig), reinterpret_cast<void **>(&pc));
+        if (FAILED(hr) || !pc) {
+            if (error) *error = QStringLiteral("policy interface 0x%1").arg(quint32(hr), 8, 16, QLatin1Char('0'));
+            log(QStringLiteral("setDefault: no policy interface 0x%1").arg(quint32(hr), 8, 16, QLatin1Char('0')));
+            return false;
+        }
+        const std::wstring w = id.toStdWString();
+        HRESULT last = S_OK;
+        for (int role = 0; role < 3; role++) {
+            const HRESULT h = pc->SetDefaultEndpoint(w.c_str(), ERole(role));
+            if (FAILED(h)) last = h;
+        }
+        pc->Release();
+        const bool ok = (defaultPlaybackId() == id);
+        log(QStringLiteral("setDefault %1 -> %2 (last hr 0x%3)").arg(id).arg(ok ? QStringLiteral("ok") : QStringLiteral("NOT default"))
+                .arg(quint32(last), 8, 16, QLatin1Char('0')));
+        if (!ok && error) *error = QStringLiteral("Windows did not change the default device");
+        return ok;
+    }
+
     static void log(const QString &s)
     {
         QDir().mkpath(QDir::homePath() + QStringLiteral("/.KaraMixer"));
