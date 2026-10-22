@@ -1,6 +1,6 @@
 // Sends the sound of a program (Edge / Chrome) to a chosen Windows output device (e.g. "CABLE Input" of VB-Cable)
 // - the same thing as Settings > System > Sound > Volume mixer > the program's "Output" - without opening Settings.
-// Uses Windows' own (undocumented) per-app routing interface; works on Windows 10 21H2 and Windows 11.
+// Uses only classic Core Audio (Windows Vista and newer): no WinRT, so it also starts on Windows 7.
 #ifndef AUDIOROUTE_H
 #define AUDIOROUTE_H
 
@@ -9,9 +9,6 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
-#include <roapi.h>
-#include <winstring.h>
-#include <inspectable.h>
 #include <tlhelp32.h>
 #include <set>
 #include <vector>
@@ -22,36 +19,7 @@
 #include <QTextStream>
 #include <QDateTime>
 
-#pragma comment(lib, "runtimeobject.lib")
 #pragma comment(lib, "ole32.lib")
-
-// Windows 10 21H2+ / Windows 11 layout (only SetPersistedDefaultAudioEndpoint / Get... are used)
-MIDL_INTERFACE("ab3d4648-e242-459f-b02f-541c70306324")
-IKmAudioPolicyConfigFactory : public IInspectable
-{
-public:
-    virtual HRESULT STDMETHODCALLTYPE m01() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m02() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m03() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m04() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m05() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m06() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m07() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m08() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m09() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m10() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m11() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m12() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m13() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m14() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m15() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m16() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m17() = 0;
-    virtual HRESULT STDMETHODCALLTYPE m18() = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetPersistedDefaultAudioEndpoint(UINT32 processId, EDataFlow flow, ERole role, HSTRING deviceId) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetPersistedDefaultAudioEndpoint(UINT32 processId, EDataFlow flow, ERole role, HSTRING *deviceId) = 0;
-    virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
-};
 
 // Windows' "set default device" interface (used by most sound-switching tools; stable across Windows versions)
 MIDL_INTERFACE("f8679f50-850a-41cf-9c72-430f290290c8")
@@ -234,69 +202,6 @@ public:
             return FALSE;
         }, reinterpret_cast<LPARAM>(&ctx));
         return ctx.pid;
-    }
-
-    // endpointId empty = back to the Windows default output. Returns the number of processes that accepted it.
-    static int setOutputForTree(DWORD rootPid, const QString &endpointId, QString *error = nullptr)
-    {
-        IKmAudioPolicyConfigFactory *f = nullptr;
-        HSTRING cls = nullptr;
-        const wchar_t name[] = L"Windows.Media.Internal.AudioPolicyConfig";
-        HRESULT hr = WindowsCreateString(name, UINT32(wcslen(name)), &cls);
-        if (SUCCEEDED(hr)) {
-            hr = RoGetActivationFactory(cls, __uuidof(IKmAudioPolicyConfigFactory), reinterpret_cast<void **>(&f));
-            if (FAILED(hr) || !f) {          // older Windows 10 builds: same layout, other interface id
-                static const GUID kOld = { 0x2a59116d, 0x6c4f, 0x45e0, { 0xa7, 0x4f, 0x70, 0x7e, 0x3f, 0xef, 0x92, 0x58 } };
-                hr = RoGetActivationFactory(cls, kOld, reinterpret_cast<void **>(&f));
-            }
-            WindowsDeleteString(cls);
-        }
-        if (FAILED(hr) || !f) {
-            if (error) *error = QStringLiteral("this Windows has no per-app routing interface (0x%1)").arg(quint32(hr), 8, 16, QLatin1Char('0'));
-            log(error ? *error : QStringLiteral("no policy factory"));
-            return 0;
-        }
-
-        HSTRING dev = nullptr;
-        if (!endpointId.isEmpty()) {
-            const QString full = QStringLiteral("\\\\?\\SWD#MMDEVAPI#") + endpointId +
-                                 QStringLiteral("#{e6327cad-dcec-4949-ae8a-991e976a79d4}");
-            const std::wstring w = full.toStdWString();
-            WindowsCreateString(w.c_str(), UINT32(w.size()), &dev);
-        }
-
-        int ok = 0;
-        for (DWORD pid : tree(rootPid)) {
-            const HRESULT h1 = f->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, dev);
-            const HRESULT h2 = f->SetPersistedDefaultAudioEndpoint(pid, eRender, eMultimedia, dev);
-            if (SUCCEEDED(h1) && SUCCEEDED(h2)) ok++;
-            else log(QStringLiteral("pid %1: Set failed 0x%2 / 0x%3").arg(pid).arg(quint32(h1), 8, 16, QLatin1Char('0')).arg(quint32(h2), 8, 16, QLatin1Char('0')));
-        }
-        if (dev) WindowsDeleteString(dev);
-        f->Release();
-        log(QStringLiteral("route root pid %1 -> %2 : %3 processes").arg(rootPid).arg(endpointId.isEmpty() ? QStringLiteral("(default)") : endpointId).arg(ok));
-        if (!ok && error) *error = QStringLiteral("Windows refused the routing");
-        // read it back: does Windows keep what was set?
-        if (ok && !endpointId.isEmpty()) {
-            IKmAudioPolicyConfigFactory *g2 = nullptr;
-            HSTRING c2 = nullptr;
-            if (SUCCEEDED(WindowsCreateString(name, UINT32(wcslen(name)), &c2))) {
-                if (FAILED(RoGetActivationFactory(c2, __uuidof(IKmAudioPolicyConfigFactory), reinterpret_cast<void **>(&g2))) || !g2) {
-                    static const GUID kOld2 = { 0x2a59116d, 0x6c4f, 0x45e0, { 0xa7, 0x4f, 0x70, 0x7e, 0x3f, 0xef, 0x92, 0x58 } };
-                    RoGetActivationFactory(c2, kOld2, reinterpret_cast<void **>(&g2));
-                }
-                WindowsDeleteString(c2);
-            }
-            if (g2) {
-                HSTRING got = nullptr;
-                const HRESULT hg = g2->GetPersistedDefaultAudioEndpoint(rootPid, eRender, eMultimedia, &got);
-                const wchar_t *gp = got ? WindowsGetStringRawBuffer(got, nullptr) : nullptr;
-                log(QStringLiteral("read back: hr=0x%1 value=%2").arg(quint32(hg), 8, 16, QLatin1Char('0')).arg(gp ? QString::fromWCharArray(gp) : QStringLiteral("(empty)")));
-                if (got) WindowsDeleteString(got);
-                g2->Release();
-            }
-        }
-        return ok;
     }
 };
 
