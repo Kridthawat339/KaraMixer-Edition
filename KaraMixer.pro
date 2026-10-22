@@ -139,8 +139,6 @@ HEADERS  += Widgets/PanKnob.h \
     Widgets/TitleBar.h \
     Widgets/DialogSkin.h \
     Widgets/ParamGlide.h \
-    Midi/MasterDsp.h \
-    Dialogs/MasteringDialog.h \
     Widgets/MenuIcons.h \
     Widgets/VSTLabel.h \
     Midi/HNKFile.h \

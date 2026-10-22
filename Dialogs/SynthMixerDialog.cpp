@@ -42,6 +42,19 @@
 #include <QScreen>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QFileDialog>
+#include <QComboBox>
+#include <QGroupBox>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QProcess>
+#include <QProgressBar>
+#include <QStandardPaths>
+#include <QLocale>
+#include <cmath>
+#include <vector>
+#include <atomic>
+#include <bassmix.h>
 #include "Widgets/TitleBar.h"
 #include "Widgets/MasterStrip.h"
 #include "Widgets/SysMonitor.h"
@@ -74,8 +87,6 @@
 #include <bass_vst.h>
 #include "Vst3/BassVst3.h"
 #include "Dialogs/VSTDirsDialog.h"
-#include "Dialogs/YouTubeDialog.h"
-#include "Widgets/ProLicense.h"
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -258,7 +269,6 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
     // Frameless window with our own themed neon title bar
     ui->verticalLayout_60->setContentsMargins(6, 6, 6, 6);
     titleBar = new TitleBar(tr("KaraMixer Edition"), this);
-    titleBar->setShowLicense(true);   // PRO Activated / Free Version badge (main window only)
     ui->verticalLayout_60->insertWidget(0, titleBar);
     {
         FrameOverlay *fo = new FrameOverlay(this);   // 1px outline; also asks Windows 11 for native rounded corners
@@ -271,28 +281,6 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
     setMouseTracking(true);
 
     // timer
-#ifndef __linux__
-    // The strip meters follow MIDI notes; the YouTube strip (and the master meter) follow the captured audio instead
-    {
-        QTimer *ytMeter = new QTimer(this);
-        connect(ytMeter, &QTimer::timeout, this, [this]() {
-            // level of the captured audio, scaled by the strip fader (reading the stream itself would take samples away from the mixer)
-            YouTubeBridge &yb = YouTubeBridge::get();
-            if (!yb.active())
-                return;
-            const Instrument im = synth->instrument(InstrumentType::YouTube);
-            const float gain = im.enable ? FaderTaper::gain(im.volume) : 0.0f;
-            const float p = yb.takeStripPeak() * gain;
-            if (p < 0.001f)
-                return;
-            const int v = qBound(0, int((20.0 * std::log10(double(p)) + 60.0) / 60.0 * 127.0 + 0.5), 127);
-            chInstMap[InstrumentType::YouTube]->peak(v);
-            if (masterStrip)
-                masterStrip->peak(qMin(127, int(v * player->effectiveGain())));
-        });
-        ytMeter->start(40);
-    }
-#endif
 
     settingTimer.setInterval(10 * 60000);
     settingTimer.start();
@@ -1687,41 +1675,6 @@ void SynthMixerDialog::buildSidePanels()
     btnPreset->setToolTip(tr("บันทึก / เรียกการตั้งค่ามิกเซอร์ทั้งชุด"));
     lv->addWidget(btnPreset);
 
-#ifndef __linux__
-    // ---- YouTube (PRO): the button only opens YouTube (and starts the capture quietly); the vocal remover has its own button
-    QPushButton *btnYouTube = new QPushButton(tr("YouTube"), left);
-    btnYouTube->setFocusPolicy(Qt::NoFocus);
-    btnYouTube->setMinimumHeight(24);
-    btnYouTube->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    btnYouTube->setToolTip(tr("PRO: เปิด YouTube (เสียงเข้าแทรค YouTube และผ่าน Master)"));
-    connect(btnYouTube, &QPushButton::clicked, this, [this]() {
-        if (!ProLicense::ensureUnlocked(this))
-            return;
-        YouTubeBridge::startQuiet(synth);
-        YouTubeBridge::openYouTube();
-    });
-    lv->addWidget(btnYouTube);
-
-    QPushButton *btnVocal = new QPushButton(tr("ตัดเสียงร้อง"), left);
-    btnVocal->setFocusPolicy(Qt::NoFocus);
-    btnVocal->setMinimumHeight(24);
-    btnVocal->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    btnVocal->setToolTip(tr("PRO: ตัดเสียงร้องของ YouTube และตั้งค่าการรับเสียง"));
-    connect(btnVocal, &QPushButton::clicked, this, [this]() {
-        if (!ProLicense::ensureUnlocked(this))
-            return;
-        YouTubeDialog *d = findChild<YouTubeDialog *>(QStringLiteral("youTubeDlg"));
-        if (!d) {
-            d = new YouTubeDialog(this, synth);
-            d->setObjectName(QStringLiteral("youTubeDlg"));
-        }
-        d->show();
-        d->raise();
-        d->activateWindow();
-    });
-    lv->addWidget(btnVocal);
-#endif
-
     // show / hide the Pan and Reverb knobs of all strips (lit = shown)
     QToolButton *btnKnobs = new QToolButton(left);
     btnKnobs->setText(tr("PAN / REV"));
@@ -2014,13 +1967,12 @@ void SynthMixerDialog::mapChInstUI()
     chInstMap[InstrumentType::BusGroup16]   = ui->ch_62;
 
     chInstMap[InstrumentType::Canthai]      = ui->ch_63;   // khaen strip (drawn after the Pipe strip)
-    chInstMap[InstrumentType::YouTube]       = ui->ch_64;   // YouTube sound: first strip of the Bus group
 }
 
 void SynthMixerDialog::setChInstDetails()
 {
-    // 64 (appended after the buses: Canthai, then YouTube)
-    QString names[64] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
+    // 63 (appended after the buses: Canthai)
+    QString names[63] = { "Piano", "Organ", "Accordn", "Chmt.P", "Percsve",
                         "Bass", "Nylon", "Steel", "Jazz", "Clean",
                         "Overdrv", "Distrn", "Harmncs", "Trumpet", "Brass",
                         "S.Brass", "Saxphn", "Reed", "Pipe", "Strings",
@@ -2036,9 +1988,9 @@ void SynthMixerDialog::setChInstDetails()
                         "Bus 9", "Bus 10", "Bus 11", "Bus 12",
                         "Bus 13", "Bus 14", "Bus 15", "Bus 16",
 
-                        "Canthai", "YouTube" };
+                        "Canthai" };
 
-    QString tooltips[64] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
+    QString tooltips[63] = { "Piano", "Organ", "Accordion", "Chromatic Percussion",
                              "Percussive", "Bass", "Acoustic Guitar (nylon)",
                              "Acoustic Guitar (steel)", "Electric Guitar (jazz)",
                              "Electric Guitar (clean)", "Overdriven Guitar",
@@ -2060,11 +2012,10 @@ void SynthMixerDialog::setChInstDetails()
                              "Bus Group 9", "Bus Group 10", "Bus Group 11", "Bus Group 12",
                              "Bus Group 13", "Bus Group 14", "Bus Group 15", "Bus Group 16",
 
-                             "Canthai (Khaen / แคน)",
-                             "YouTube (เสียงจาก YouTube ผ่าน VB-Cable + ตัดเสียงร้อง)"};
+                             "Canthai (Khaen / แคน)"};
 
     QString rc = ":/Icons/Instruments/";
-    QString imgs[64] = { "Piano.png", "Organ.png", "Accordion.png",
+    QString imgs[63] = { "Piano.png", "Organ.png", "Accordion.png",
                          "Chromatic Percussion.png", "Percussive.png",
                          "Bass.png", "Nylon.png", "Steel.png", "Jazz.png",
                          "Clean.png", "Overdriven.png", "Distortion.png",
@@ -2086,7 +2037,7 @@ void SynthMixerDialog::setChInstDetails()
                          "bs9.png", "bs10.png", "bs11.png", "bs12.png",
                          "bs13.png", "bs14.png", "bs15.png", "bs16.png",
 
-                         "Canthai.png", "" };
+                         "Canthai.png" };
 
 
     for (int i=0; i<synth->HANDLE_STREAM_COUNT; i++)
@@ -2100,8 +2051,6 @@ void SynthMixerDialog::setChInstDetails()
             ich->setInstrumentImage(modernBadge(QStringLiteral("FX"), QColor(0xb3, 0x88, 0xff), false));
         else if (i >= 42 && i < 46)   // VSTi 1..4
             ich->setInstrumentImage(modernBadge(QStringLiteral("VSTi"), QColor(0x4f, 0xc3, 0xf7), false));
-        else if (i == 63)             // YouTube
-            ich->setInstrumentImage(modernBadge(QStringLiteral("YT"), QColor(0xff, 0x3d, 0x3d), false));
         else if (i >= 46 && i < 62)   // bus 1..16
             ich->setInstrumentImage(modernBadge(QString::number(i - 45), tagAccent(ich->nameTag()), true));
         else

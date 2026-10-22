@@ -12,11 +12,20 @@
 #include <QThread>
 #include <QMessageBox>
 #include <QFileInfo>
-#include "Midi/KmSoundfont.h"
 #ifndef __linux__
-#include "Dialogs/YouTubeDialog.h"
 #endif
 #include <QFontDatabase>
+#include <QSettings>
+#include <QDir>
+#include <QTimer>
+#include <QProcess>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFile>
+#include <cmath>
+#include <atomic>
+#include <bass.h>
+#include <bassmidi.h>
 
 #include "BASSFX/VSTFX.h"
 #include "version.h"
@@ -132,39 +141,8 @@ int main(int argc, char *argv[])
 
     splash->finish(mixer);
 
-    #ifndef __linux__
-    YouTubeBridge::restoreDefaultOutput();                           // the Windows default output left changed by a crash
-    YouTubeBridge::autoStart(w.midiPlayer()->midiSynthesizer());     // YouTube input (PRO), when switched on in its window
-    #endif
-
     delete splash;
     delete pixmap;
-
-    // locked soundfonts made for a USB flash drive that is not plugged in
-    if (!KmSf::foreignUsbFiles().isEmpty()) {
-        QStringList names;
-        for (const QString &f : KmSf::foreignUsbFiles())
-            names << QFileInfo(f).fileName();
-        QMessageBox box(QMessageBox::NoIcon, QString::fromUtf8("Soundfont ที่ล็อกไว้"),
-                        QString::fromUtf8("ซาวด์ฟอนต์ต่อไปนี้ถูกล็อกด้วยแฟลชไดร์ USB ซึ่งไม่ได้เสียบอยู่:\n\n")
-                            + names.join("\n")
-                            + QString::fromUtf8("\n\nเสียบแฟลชไดร์ตัวที่ใช้ล็อก แล้วเปิดโปรแกรมใหม่"),
-                        QMessageBox::Ok, mixer);
-        box.exec();
-    }
-
-    // locked soundfonts made for another computer (or in the old format) were skipped: tell the user what to do
-    if (!KmSf::foreignFiles().isEmpty()) {
-        QStringList names;
-        for (const QString &f : KmSf::foreignFiles())
-            names << QFileInfo(f).fileName();
-        QMessageBox box(QMessageBox::NoIcon, QString::fromUtf8("Soundfont ที่ล็อกไว้"),
-                        QString::fromUtf8("ซาวด์ฟอนต์ต่อไปนี้ถูกล็อกสำหรับเครื่องอื่น (หรือเป็นไฟล์ล็อกรุ่นเก่า) จึงใช้กับเครื่องนี้ไม่ได้:\n\n")
-                            + names.join("\n")
-                            + QString::fromUtf8("\n\nต้องล็อกใหม่ด้วย Hardware ID ของเครื่องนี้: ") + KmSf::thisMachineId(),
-                        QMessageBox::Ok, mixer);
-        box.exec();
-    }
 
     return a.exec();
 }

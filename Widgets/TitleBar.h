@@ -5,6 +5,22 @@
 // Header-only and without Q_OBJECT on purpose (no moc step needed).
 
 #include <QWidget>
+#include <QString>
+#include <QByteArray>
+#include <QStringList>
+#include <QCryptographicHash>
+#include <QMessageAuthenticationCode>
+#include <QSysInfo>
+#include <QSettings>
+#include <QDialog>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QComboBox>
+#include <QVBoxLayout>
+#include <QApplication>
+#include <QClipboard>
+#include <QElapsedTimer>
+#include "Config.h"
 #include <QLabel>
 #include <QAbstractButton>
 #include <QHBoxLayout>
@@ -29,7 +45,6 @@
 #include <QVariantAnimation>
 
 #include "Theme.h"
-#include "Widgets/ProLicense.h"
 
 class TitleButton : public QAbstractButton
 {
@@ -113,12 +128,6 @@ public:
         titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
         lay->addWidget(titleLabel);
 
-        // licence badge after the title: green "PRO  Activated" or orange / red "Free Version"
-        licenseLabel = new QLabel(this);
-        licenseLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
-        lay->addWidget(licenseLabel);
-        updateLicense();
-
         lay->addStretch(1);
 
         minimizeButton = new TitleButton(TitleButton::Minimize, this);
@@ -129,30 +138,6 @@ public:
         refresh();
     }
 
-    // re-read the licence state and recolour the badge (called on start, on theme change and after a dialog closes)
-    // the badge belongs to the main mixer window only; ordinary dialogs keep a plain title
-    void setShowLicense(bool on) { showLic = on; updateLicense(); }
-
-    void updateLicense()
-    {
-        licenseLabel->setVisible(showLic);
-        if (!showLic)
-            return;
-        const bool pro = ProLicense::isUnlocked();
-        QString color;
-        if (pro)
-            color = "#3ddc84";                                   // green
-        else
-            color = Theme::isOrange() ? "#ff4d4d" : "#ff9f1a";   // red on the orange theme, orange elsewhere
-        licenseLabel->setText(pro ? QString::fromLatin1("PRO  Activated") : QString::fromLatin1("Free Version"));
-        QFont f = titleLabel->font();
-        f.setBold(true);
-        f.setPointSizeF(qMax(6.0, titleLabel->font().pointSizeF() / 2.0));   // half the size of the title
-        f.setLetterSpacing(QFont::AbsoluteSpacing, 0.0);
-        licenseLabel->setFont(f);
-        licenseLabel->setStyleSheet(QString("color: %1; background: transparent;").arg(color));
-    }
-
     void setTitle(const QString &t) { titleLabel->setText(t); QTimer::singleShot(0, this, [this]() { fitTitle(); }); }
 
     // shrink the title font until the whole text fits between the icon and the buttons
@@ -160,7 +145,7 @@ public:
     {
         QWidget *right = minimizeButton->isVisible() ? static_cast<QWidget *>(minimizeButton)
                                                      : static_cast<QWidget *>(closeButton);
-        int avail = right->x() - titleLabel->x() - (showLic ? licenseLabel->sizeHint().width() + 8 : 0) - 8;   // badge is small, so little room is lost
+        int avail = right->x() - titleLabel->x() - 8;
         if (avail < 40)
             return;
         QFont f = titleLabel->font();
@@ -172,7 +157,6 @@ public:
                 break;
         }
         titleLabel->setFont(f);
-        updateLicense();
     }
 
 protected:
@@ -187,24 +171,12 @@ protected:
         update();
     }
 
-    bool event(QEvent *e) override
-    {
-        if (e->type() == QEvent::Type(QEvent::User + 77)) {   // sent by ProLicense::activate()
-            updateLicense();
-            return true;
-        }
-        return QWidget::event(e);
-    }
-
     void changeEvent(QEvent *e) override
     {
         if (e->type() == QEvent::PaletteChange || e->type() == QEvent::ApplicationPaletteChange)
         {
             refresh();
-            updateLicense();
         }
-        else if (e->type() == QEvent::ActivationChange && isActiveWindow())
-            updateLicense();   // e.g. after the licence dialog was closed
         QWidget::changeEvent(e);
     }
 
@@ -240,8 +212,6 @@ protected:
 private:
     QLabel *iconLabel;
     QLabel *titleLabel;
-    QLabel *licenseLabel;
-    bool showLic = false;
 };
 
 // Rounded window corners.

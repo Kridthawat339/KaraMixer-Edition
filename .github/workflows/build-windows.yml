@@ -41,34 +41,6 @@ jobs:
           qmake ..\3rdParty\VSTChecker\VSTChecker.pro CONFIG+=release
           nmake
 
-      - name: Licence secret (from the KM_LIC_SECRET repository secret)
-        shell: pwsh
-        env:
-          KM_LIC_SECRET: ${{ secrets.KM_LIC_SECRET }}
-        run: |
-          if ([string]::IsNullOrEmpty($env:KM_LIC_SECRET)) {
-            Write-Host "::warning::KM_LIC_SECRET is not set - this build is the free version only (no PRO licence can be accepted)"
-          } else {
-            $sec = [System.Text.Encoding]::UTF8.GetBytes($env:KM_LIC_SECRET)
-            $key = New-Object byte[] 8
-            $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-            $rng.GetBytes($key)
-            $enc = New-Object System.Collections.Generic.List[string]
-            for ($i = 0; $i -lt $sec.Length; $i++) {
-              $v = ($sec[$i] -bxor $key[$i % 8]) -bxor (($i * 31 + 7) -band 255)
-              $enc.Add(('0x{0:X2}' -f $v))
-            }
-            $keyHex = ($key | ForEach-Object { '0x{0:X2}' -f $_ }) -join ','
-            $lines = @(
-              '// generated at build time - do not commit',
-              ('#define KM_SECRET_LEN ' + $sec.Length),
-              ('static const unsigned char kmSecretEnc[] = { ' + ($enc -join ',') + ' };'),
-              ('static const unsigned char kmSecretKey[] = { ' + $keyHex + ' };')
-            )
-            Set-Content -Path Widgets/km_secret.h -Value $lines -Encoding ascii
-            Write-Host "licence secret header written ($($sec.Length) bytes, scrambled)"
-          }
-
       - name: Build KaraMixer Edition
         shell: cmd
         run: |

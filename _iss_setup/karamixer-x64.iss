@@ -45,9 +45,6 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: waituntilterminated; Check: VC2017RedistNeedsInstall
-; YouTube (PRO) needs a virtual audio cable. They are third-party products with their own licences,
-; so they are NOT bundled: the finish page offers to open the official download pages instead.
-Filename: "https://vb-audio.com/Cable/"; Flags: shellexec nowait postinstall skipifsilent unchecked; Description: "Open the VB-Cable (virtual audio cable) download page - needed for the YouTube function (PRO)"
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifsilent; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"
 
 [Dirs]

@@ -27,13 +27,9 @@ KaraMixer Edition - NOTICE / ประกาศลิขสิทธิ์แล
    Source / ซอร์ส : https://github.com/Kridthawat339/KaraMixer-Edition
    Contact / ติดต่อ: Buaimusic@gmail.com
 
-   KaraMixer Edition is distributed free of charge. Optional PRO functions are
-   unlocked with a licence key that can be purchased from the author. The key
-   pays for the unlock service, support and updates; it does not take away any
-   right you have under GPLv3 (copy, study, modify and redistribute the source).
-   KaraMixer Edition แจกฟรี ฟังก์ชัน PRO ปลดล็อคด้วยรหัสที่ซื้อจากผู้พัฒนา
-   รหัสคือค่าบริการปลดล็อค ซัพพอร์ต และอัปเดต ไม่ตัดสิทธิ์ของคุณตาม GPLv3
-   (คัดลอก ศึกษา แก้ไข และแจกจ่ายต่อซอร์สโค้ด)
+   KaraMixer Edition is free software: free to download, use, study, modify and redistribute
+   under GPLv3. All functions are available to everyone; there is no licence key.
+   KaraMixer Edition เป็นซอฟต์แวร์เสรี ดาวน์โหลดและใช้ฟรี ทุกฟังก์ชันใช้ได้ทุกคน ไม่มีรหัสปลดล็อค
 
 4. Third-party components / ส่วนประกอบของบุคคลที่สาม
    - Qt 5.15 - LGPLv3 (dynamically linked)  https://www.qt.io
@@ -47,10 +43,8 @@ KaraMixer Edition - NOTICE / ประกาศลิขสิทธิ์แล
    เงื่อนไขของส่วนประกอบภายนอกเป็นของเจ้าของแต่ละราย
 
 5. Not included / ไม่ได้รวมมาในโปรแกรม
-   loopMIDI, VB-Cable, Microsoft Edge / Google Chrome, YouTube, soundfonts and VST plug-ins are
-   products of their own owners, with their own licences. The installer only
-   links to their official download pages. The YouTube function plays YouTube in the
-   user's own browser; it does not download or store any video.
+   loopMIDI, soundfonts and VST plug-ins are products of their own owners, with their own
+   licences. They are not included in this program.
    ผลิตภัณฑ์เหล่านี้เป็นของเจ้าของเอง ตัวติดตั้งเพียงลิงก์ไปหน้าดาวน์โหลดทางการ
 
-   "KaraMixer", "YouTube" and other names are trademarks of their owners.
+   "KaraMixer" and other names are trademarks of their owners.

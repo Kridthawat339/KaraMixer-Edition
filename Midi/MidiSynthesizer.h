@@ -13,7 +13,6 @@
 
 #include "Midi/MidiHelper.h"
 #include "Midi/MidiOut.h"
-#include "Midi/MasterDsp.h"
 #include "BASSFX/FX.h"
 #include "BASSFX/Equalizer31BandFX.h"
 #include "BASSFX/Chorus2FX.h"
@@ -196,11 +195,6 @@ public:
     void setSincInterpolation(bool on);         // applied to the running MIDI streams at once
     int  voices() const { return maxVoices; }
     void setVoices(int n);                      // applied to the running MIDI streams at once
-    // PRO mastering (master chain + loudness / auto level + limiter): runs on every output mixer, last in line
-    void setMasterParams(const MasterDsp::Params &p);
-    MasterDsp::Params masterParams() const;
-    MasterDsp::Meter masterMeter() const;           // the main output (mixer 0)
-    DWORD mainMixerHandle() const { return mixers.isEmpty() ? 0 : mixers[0].handle; }   // for the output recorder
 
     bool isUseFXRC() { return useFX; }
     void setUseFXRC(bool use);
@@ -239,9 +233,8 @@ public:
     void removeVSTiFile(int vstiIndex);
     #endif
 
-    const int HANDLE_STREAM_COUNT = 64;        // 46 MIDI/VSTi + 16 buses + the Canthai strip (62) + the YouTube strip (63)
+    const int HANDLE_STREAM_COUNT = 63;        // 46 MIDI/VSTi + 16 buses + the Canthai strip (62)
     const int HANDLE_CANTHAI = 62;
-    const int HANDLE_YOUTUBE = 63;
     const int HANDLE_MIDI_COUNT = 46;
     const int HANDLE_VSTI_START = 42;
     const int HANDLE_VSTI_COUNT = 4;

@@ -17,6 +17,27 @@
 #include <QProcess>
 #include <QSettings>
 #include <QWindow>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QLocale>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QApplication>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QSlider>
+#include <QGroupBox>
+#include <QGridLayout>
+#include <QDialog>
+#include <QClipboard>
+#include <QListWidget>
+#include <QDesktopServices>
+#include <QUrl>
+#include <cmath>
 
 #include "Config.h"
 #include "Theme.h"
@@ -33,19 +54,14 @@
 #include "Dialogs/MapChannelDialog.h"
 #include "Dialogs/BusDialog.h"
 #include "Dialogs/SpeakerDialog.h"
-#include "Dialogs/LockSoundfontDialog.h"
-#include "Dialogs/RecordDialog.h"
 #include <QToolTip>
 #include <QCursor>
-#include "Dialogs/MasteringDialog.h"
 #ifndef __linux__
 #include "BASSFX/VSTFX.h"
 #include "Vst3/BassVst3.h"
 #include <QScreen>
 #include <QGuiApplication>
 #endif
-#include "Widgets/ProMenuBadge.h"
-#include "Widgets/ProLicense.h"
 #include "Dialogs/Equalizer31BandDialog.h"
 #include "Dialogs/Chorus2Dialog.h"
 #include "Widgets/MenuIcons.h"
@@ -218,8 +234,6 @@ MainWindow::MainWindow(QWidget *parent) :
         bool lKick  = settings->value("MidiLockKick", false).toBool();
         bool lBass  = settings->value("MidiLockBass", false).toBool();
         int synBuf  = settings->value("SynthBuffer", 100).toInt();
-        if (!ProLicense::isUnlocked() && synBuf < 50)
-            synBuf = 50;   // low latency (below 50 ms) is a PRO option
 
         BASS_SetConfig(BASS_CONFIG_BUFFER, synBuf);
         player->setMidiOut(oPort);
@@ -301,16 +315,15 @@ MainWindow::MainWindow(QWidget *parent) :
             settings->setValue("AsioDevice", -1);
         }
         AsioOutput::setPairMask(settings->value("AsioPairMask", 1).toUInt());
-        AsioOutput::setSpeakerSplit(ProLicense::isUnlocked() && settings->value("AsioSpeakerSplit", false).toBool());   // PRO function
+        AsioOutput::setSpeakerSplit(settings->value("AsioSpeakerSplit", false).toBool());
         AsioOutput::setBufferSize(settings->value("AsioBufferSamples", 0).toInt());
         synth->setAsioDevice(asio);
 
-        // audio quality: the higher settings are PRO options (Free = 44.1 kHz, linear interpolation, 256 voices)
+        // audio quality
         {
-            const bool pro = ProLicense::isUnlocked();
-            synth->setVoices(pro ? settings->value("SynthVoices", 500).toInt() : 256);
-            synth->setSampleRate(pro ? settings->value("SynthSampleRate", 44100).toInt() : 44100);
-            synth->setSincInterpolation(pro ? settings->value("SynthSinc", true).toBool() : false);
+            synth->setVoices(settings->value("SynthVoices", 500).toInt());
+            synth->setSampleRate(settings->value("SynthSampleRate", 44100).toInt());
+            synth->setSincInterpolation(settings->value("SynthSinc", true).toBool());
             synth->setReverbStrong(settings->value("ReverbStrong", false).toBool());
         }
 
@@ -320,8 +333,6 @@ MainWindow::MainWindow(QWidget *parent) :
         synth->setUsetFloattingPoint(useFloat);
         synth->setUseFXRC(useFX);
 
-        // PRO mastering (limiter / chain / auto level): saved settings, only with a licence
-        MasteringDialog::applySaved(synth);
 
         // Soundfonts and Soundfonts map
         // move to setup in main function (main.cpp)
@@ -1691,14 +1702,11 @@ void MainWindow::applyConfigLive()
 
     // ---- 1. audio engine options (the setters rebuild the audio only when the value really changes)
     {
-        const bool pro = ProLicense::isUnlocked();
         int synBuf = app.value("SynthBuffer", 100).toInt();
-        if (!pro && synBuf < 50)
-            synBuf = 50;
         BASS_SetConfig(BASS_CONFIG_BUFFER, synBuf);
 
-        synth->setVoices(pro ? app.value("SynthVoices", 500).toInt() : 256);
-        synth->setSincInterpolation(pro ? app.value("SynthSinc", true).toBool() : false);
+        synth->setVoices(app.value("SynthVoices", 500).toInt());
+        synth->setSincInterpolation(app.value("SynthSinc", true).toBool());
         synth->setReverbStrong(app.value("ReverbStrong", false).toBool());
 
         int aout = app.value("SynthDefaultDevice", 1).toInt();
@@ -1798,9 +1806,6 @@ void MainWindow::applyConfigLive()
     // ---- 5. the mixer: strips, effects, routing, master volume ...
     synthMix->reloadFromSettings();
 
-    // ---- 6. PRO mastering
-    MasteringDialog::applySaved(synth);
-
     ui->sliderVolume->setValue(player->volume());
     synthMix->setSkipSave(false);
 }
@@ -1822,9 +1827,6 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
 {
     QMenu menu(tr("Context menu"), synthMix);
     menu.setMinimumWidth(230);
-    QAction *lockSfAction = nullptr;
-    QAction *recordAction = nullptr;
-    QAction *masteringAction = nullptr;
 
     QAction actionSettings(tr("ตั้งค่า..."), this);
     QAction actionMappChanel(tr("แยกช่องสัญญาณ..."), this);
@@ -1864,33 +1866,6 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
 
         act = menu.addAction(MenuIcons::make(MenuIcons::Speaker), tr("แยกอุปกรณ์เสียง/ลำโพง..."));
         connect(act, SIGNAL(triggered()), this, SLOT(showSpeakerDialog()));
-
-        act = menu.addAction(MenuIcons::make(MenuIcons::Soundfont), tr("Lock Soundfont..."));
-        lockSfAction = act;   // gets a coloured "Pro" badge right before the menu opens
-        connect(act, &QAction::triggered, this, [this]() {
-            if (!ProLicense::ensureUnlocked(dialogParent()))   // PRO only: shows the hardware ID and asks for the licence
-                return;
-            LockSoundfontDialog dlg(dialogParent(), midiPlayer()->midiSynthesizer());
-            dlg.exec();
-        });
-
-        act = menu.addAction(MenuIcons::make(MenuIcons::Save), tr("Record Output..."));
-        recordAction = act;   // PRO: record the main output to a WAV file
-        connect(act, &QAction::triggered, this, [this]() {
-            if (!ProLicense::ensureUnlocked(dialogParent()))
-                return;
-            RecordDialog dlg(dialogParent(), midiPlayer()->midiSynthesizer());
-            dlg.exec();
-        });
-
-        act = menu.addAction(MenuIcons::make(MenuIcons::Meter), tr("Mastering (Limiter / LUFS / Chain)..."));
-        masteringAction = act;   // PRO: master limiter, mastering chain, loudness meter + auto level
-        connect(act, &QAction::triggered, this, [this]() {
-            if (!ProLicense::ensureUnlocked(dialogParent()))
-                return;
-            MasteringDialog dlg(dialogParent(), midiPlayer()->midiSynthesizer());
-            dlg.exec();
-        });
 
         #ifndef __linux__
         act = menu.addAction(MenuIcons::make(MenuIcons::Vst), tr("จัดการ VST && VSTi..."));
@@ -2031,12 +2006,6 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
     });
     leaveTimer.start();
 
-    if (lockSfAction)
-        ProMenuBadge::attach(&menu, lockSfAction);
-    if (recordAction)
-        ProMenuBadge::attach(&menu, recordAction);
-    if (masteringAction)
-        ProMenuBadge::attach(&menu, masteringAction);
     menu.exec(globalPos);
     QMetaObject::invokeMethod(synthMix, "syncQuickChecks");
 }

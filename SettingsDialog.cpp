@@ -6,13 +6,21 @@
 #include <QMessageBox>
 #include <QFontDialog>
 #include <QColorDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QApplication>
+#include <QSettings>
+#include <QClipboard>
+#include <QDialog>
+#include <QElapsedTimer>
+#include <cmath>
+#include <bass.h>
+#include <bassmidi.h>
 
 #include "Config.h"
 #include "Utils.h"
 #include "Midi/MidiHelper.h"
 #include "Midi/AsioOutput.h"
-#include "Widgets/ProLicense.h"
-#include "Midi/KmSoundfont.h"
 #include <QGroupBox>
 #include <QComboBox>
 #include <QCheckBox>
@@ -387,15 +395,14 @@ void SettingsDialog::initDeviceTab()
     connect(ui->chbSynthFx, SIGNAL(toggled(bool)), this, SLOT(onChbUseFXToggled(bool)));
     connect(ui->sliderBuffer, SIGNAL(valueChanged(int)), this, SLOT(onSliderBufferValueChanged(int)));
 
-    // ---- Audio quality (PRO) -------------------------------------------------------------------------------
-    // Free: 44.1 kHz, linear interpolation, 256 voices, latency 50 ms or more.
-    // PRO : up to 96 kHz, Sinc interpolation, up to 1000 voices, latency down to 10 ms.
+    // ---- Audio quality -------------------------------------------------------------------------------------
+    // Up to 96 kHz, Sinc interpolation, up to 1000 voices, latency down to 10 ms. All of it is free.
     if (QVBoxLayout *vl = qobject_cast<QVBoxLayout *>(ui->groupBox_12->parentWidget()->layout()))
     {
-        QGroupBox *box = new QGroupBox(QString::fromUtf8("คุณภาพเสียง (PRO)"), ui->groupBox_12->parentWidget());
+        QGroupBox *box = new QGroupBox(QString::fromUtf8("คุณภาพเสียง"), ui->groupBox_12->parentWidget());
         QGridLayout *g = new QGridLayout(box);
 
-        auto pro = [](const QString &t, bool locked) { return locked ? t + QStringLiteral("   [PRO]") : t; };
+        auto pro = [](const QString &t, bool) { return t; };
 
         QComboBox *cbRate = new QComboBox(box);
         const int rates[] = { 44100, 48000, 88200, 96000 };
@@ -413,7 +420,7 @@ void SettingsDialog::initDeviceTab()
         cbVoices->setCurrentIndex(qMax(0, cbVoices->findData(synth->voices())));
 
         QLabel *note = new QLabel(QString::fromUtf8(
-            "ค่าความหน่วงต่ำกว่า 50 ms ใช้ได้เฉพาะ PRO  •  ความถี่สูงจะเห็นผลเต็มที่เมื่อใช้ ASIO หรือซาวด์การ์ดที่รองรับ"), box);
+            "ความถี่สูงและค่าความหน่วงต่ำจะเห็นผลเต็มที่เมื่อใช้ ASIO หรือซาวด์การ์ดที่รองรับ"), box);
         note->setWordWrap(true);
 
         {   // the sample rate now lives in the "Audio device" panel; this old row stays hidden
@@ -444,29 +451,17 @@ void SettingsDialog::initDeviceTab()
         // the chosen value is applied only after the licence check; otherwise the box goes back to what it was
         connect(cbRate, QOverload<int>::of(&QComboBox::activated), this, [this, cbRate, synth](int i) {
             const int hz = cbRate->itemData(i).toInt();
-            if (hz != 44100 && !ProLicense::ensureUnlocked(this)) {
-                cbRate->setCurrentIndex(qMax(0, cbRate->findData(synth->sampleRateHz())));
-                return;
-            }
             if (!mainWin->midiPlayer()->isPlayerStopped())
                 mainWin->stop();
             synth->setSampleRate(hz);
             settings->setValue("SynthSampleRate", hz);
         });
         connect(chSinc, &QCheckBox::clicked, this, [this, chSinc, synth](bool on) {
-            if (on && !ProLicense::ensureUnlocked(this)) {
-                chSinc->setChecked(false);
-                return;
-            }
             synth->setSincInterpolation(on);
             settings->setValue("SynthSinc", on);
         });
         connect(cbVoices, QOverload<int>::of(&QComboBox::activated), this, [this, cbVoices, synth](int i) {
             const int n = cbVoices->itemData(i).toInt();
-            if (n != 256 && !ProLicense::ensureUnlocked(this)) {
-                cbVoices->setCurrentIndex(qMax(0, cbVoices->findData(synth->voices())));
-                return;
-            }
             synth->setVoices(n);
             settings->setValue("SynthVoices", n);
         });
@@ -489,7 +484,7 @@ void SettingsDialog::initDeviceTab()
         chLay->setSpacing(2);
         QComboBox *cbSr = new QComboBox(dev);
         QComboBox *cbBuf = new QComboBox(dev);
-        QCheckBox *cbSplit = new QCheckBox(QString::fromUtf8("[PRO] แยกลำโพงตามแทรก (ASIO): หน้า → 1+2, หลัง → 3+4, กลาง/ซับ → 5+6, ข้าง → 7+8"), dev);
+        QCheckBox *cbSplit = new QCheckBox(QString::fromUtf8("แยกลำโพงตามแทรก (ASIO): หน้า → 1+2, หลัง → 3+4, กลาง/ซับ → 5+6, ข้าง → 7+8"), dev);
         cbSplit->setToolTip(QString::fromUtf8("ส่งตำแหน่งลำโพงที่ตั้งไว้ในแต่ละแทรก (เมนูแยกลำโพง) ออกเป็นคู่เอาต์พุตของการ์ดเสียง ต้องมีเอาต์พุตอย่างน้อย 4 ช่อง\n"
                                                 "เมื่อเปิดใช้ ตัวเลือก Active output channels ด้านบนจะไม่ถูกใช้"));
         QLabel *note = new QLabel(dev);
@@ -607,7 +602,7 @@ void SettingsDialog::initDeviceTab()
                 for (int r : rates) {
                     if (isAsio && AsioOutput::outputCount() > 0 && r != synth->sampleRateHz() && !AsioOutput::rateSupported(r))
                         continue;       // the driver says it cannot run at this rate
-                    cbSr->addItem(QString::number(r) + QStringLiteral(" Hz") + (r != 44100 ? QStringLiteral("   [PRO]") : QString()), r);
+                    cbSr->addItem(QString::number(r) + QStringLiteral(" Hz") + QString(), r);
                 }
                 cbSr->setCurrentIndex(qMax(0, cbSr->findData(synth->sampleRateHz())));
             }
@@ -640,7 +635,7 @@ void SettingsDialog::initDeviceTab()
                     const int cur = ui->sliderBuffer->value();
                     bool found = false;
                     for (int ms : msList) {
-                        cbBuf->addItem(label(ms * rate / 1000) + (ms < 50 ? QStringLiteral("   [PRO]") : QString()), ms);
+                        cbBuf->addItem(label(ms * rate / 1000) + QString(), ms);
                         if (ms == cur) found = true;
                     }
                     if (!found) cbBuf->addItem(label(cur * rate / 1000), cur);
@@ -711,10 +706,6 @@ void SettingsDialog::initDeviceTab()
         connect(cbSplit, &QCheckBox::clicked, this, [=](bool on) {
             if (on == AsioOutput::speakerSplit())
                 return;
-            if (on && !ProLicense::ensureUnlocked(this)) {      // speaker split is a PRO function
-                QTimer::singleShot(0, dev, [refresh]() { refresh(); });
-                return;
-            }
             AsioOutput::setSpeakerSplit(on);
             settings->setValue("AsioSpeakerSplit", on);
             mainWin->stop();
@@ -746,10 +737,6 @@ void SettingsDialog::initDeviceTab()
         // -------- sample rate / buffer --------
         connect(cbSr, QOverload<int>::of(&QComboBox::activated), this, [=](int i) {
             const int hz = cbSr->itemData(i).toInt();
-            if (hz != 44100 && !ProLicense::ensureUnlocked(this)) {
-                refresh();
-                return;
-            }
             if (!mainWin->midiPlayer()->isPlayerStopped())
                 mainWin->stop();
             synth->setSampleRate(hz);
@@ -768,7 +755,7 @@ void SettingsDialog::initDeviceTab()
                                          + QStringLiteral("\n") + synth->asioError());
                 settings->setValue("AsioDevice", synth->asioDevice());
             } else {
-                ui->sliderBuffer->setValue(v);          // the existing latency code (PRO check, re-open of the synth)
+                ui->sliderBuffer->setValue(v);          // the existing latency code (re-open of the synth)
             }
             refresh();
         });
@@ -1297,13 +1284,6 @@ void SettingsDialog::onChbUseFXToggled(bool checked)
 
 void SettingsDialog::onSliderBufferValueChanged(int value)
 {
-    if (value < 50 && !ProLicense::isUnlocked()) {   // latency below 50 ms is a PRO option
-        value = 50;
-        QSignalBlocker b1(ui->sliderBuffer), b2(ui->spinBuffer);
-        ui->sliderBuffer->setValue(value);
-        ui->spinBuffer->setValue(value);
-    }
-
     MidiSynthesizer *synth = mainWin->midiPlayer()->midiSynthesizer();
 
     if (!mainWin->midiPlayer()->isPlayerStopped())
@@ -1536,7 +1516,7 @@ void SettingsDialog::on_btnSfAdd_clicked()
     QStringList sfFiles = QFileDialog::getOpenFileNames(this,
                                                         tr("Add Soundfont"),
                                                         Utils::LAST_OPEN_DIR,
-                                                        "SoundFont (*.sf2 *.SF2 *.sfz *.SFZ *.kmsf)");
+                                                        "SoundFont (*.sf2 *.SF2 *.sfz *.SFZ)");
 
     if (sfFiles.count() > 0)
         Utils::LAST_OPEN_DIR = QFileInfo(sfFiles[0]).dir().absolutePath();
@@ -1550,15 +1530,6 @@ void SettingsDialog::on_btnSfAdd_clicked()
         {
             QString title = tr("ไฟล์ซาวด์ฟ้อนท์ไม่ถูกต้อง");
             QString msg = tr("ไม่สามารถอ่านไฟล์ ") + sf + tr(" ได้\nโปรดลองเลือกไฟล์อื่น");
-            if (KmSf::isProtectedFile(sf) && !KmSf::lastError().isEmpty()) {
-                title = tr("ซาวด์ฟอนต์ที่ล็อกไว้ใช้กับเครื่องนี้ไม่ได้");
-                if (KmSf::foreignUsbFiles().contains(sf))
-                    msg = sf + QString::fromUtf8("\n\nไฟล์นี้ถูกล็อกด้วยแฟลชไดร์ USB ที่ไม่ได้เสียบอยู่ "
-                                                 "เสียบแฟลชไดร์ตัวที่ใช้ล็อก แล้วเลือกไฟล์อีกครั้ง");
-                else
-                    msg = sf + QString::fromUtf8("\n\nไฟล์นี้ถูกล็อกสำหรับเครื่องอื่น (หรือเป็นไฟล์ล็อกรุ่นเก่า) "
-                                                 "ต้องล็อกใหม่ด้วย Hardware ID ของเครื่องนี้: ") + KmSf::thisMachineId();
-            }
             QMessageBox::warning(this, title, msg, QMessageBox::Ok);
         }
     }

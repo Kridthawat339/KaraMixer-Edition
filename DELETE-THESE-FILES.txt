@@ -1,0 +1,16 @@
+ลบไฟล์เหล่านี้ออกจาก repo (GitHub Desktop: ลบไฟล์แล้ว commit):
+Widgets\ProLicense.h
+Widgets\Ed25519.h
+Widgets\UsbDongle.h
+Widgets\ProMenuBadge.h
+Dialogs\LockSoundfontDialog.h
+Dialogs\RecordDialog.h
+Dialogs\MasteringDialog.h
+Dialogs\YouTubeDialog.h
+Dialogs\VocalRemover.h
+Midi\KmSoundfont.h
+Midi\MasterDsp.h
+Midi\OutputRecorder.h
+Midi\YouTubeRing.h
+Midi\AudioRoute.h
+license-tools\kmlicense.py   (ทั้งโฟลเดอร์ license-tools)
