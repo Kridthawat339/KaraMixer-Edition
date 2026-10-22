@@ -322,14 +322,14 @@ MainWindow::MainWindow(QWidget *parent) :
         // audio quality
         {
             synth->setVoices(settings->value("SynthVoices", 500).toInt());
-            synth->setSampleRate(settings->value("SynthSampleRate", 44100).toInt());
-            synth->setSincInterpolation(settings->value("SynthSinc", true).toBool());
+            synth->setSampleRate(44100);
+            synth->setSincInterpolation(false);
             synth->setReverbStrong(settings->value("ReverbStrong", false).toBool());
         }
 
         // floating and fx
-        bool useFloat = settings->value("SynthFloatPoint", true).toBool();
-        bool useFX = settings->value("SynthUseFXRC", false).toBool();
+        bool useFloat = true;    // fixed: 32-bit floating point
+        bool useFX = false;      // fixed: the old global reverb / chorus switch stays off
         synth->setUsetFloattingPoint(useFloat);
         synth->setUseFXRC(useFX);
 
@@ -1706,7 +1706,7 @@ void MainWindow::applyConfigLive()
         BASS_SetConfig(BASS_CONFIG_BUFFER, synBuf);
 
         synth->setVoices(app.value("SynthVoices", 500).toInt());
-        synth->setSincInterpolation(app.value("SynthSinc", true).toBool());
+        synth->setSincInterpolation(false);
         synth->setReverbStrong(app.value("ReverbStrong", false).toBool());
 
         int aout = app.value("SynthDefaultDevice", 1).toInt();
@@ -1718,9 +1718,9 @@ void MainWindow::applyConfigLive()
         if (asio < 0 && aout != synth->defaultDevice())
             synth->setDefaultDevice(aout);
 
-        synth->setSampleRate(app.value("SynthSampleRate", 44100).toInt());
-        synth->setUsetFloattingPoint(app.value("SynthFloatPoint", true).toBool());
-        synth->setUseFXRC(app.value("SynthUseFXRC", false).toBool());
+        synth->setSampleRate(44100);
+        synth->setUsetFloattingPoint(true);
+        synth->setUseFXRC(false);
     }
 
     // ---- 2. soundfonts (list, volumes, preset maps)

@@ -310,6 +310,8 @@ void SettingsDialog::initDeviceTab()
     Q_UNUSED(dfd)
     ui->cbMidiOut->addItem("Midi Synthesizer (SoundFont)");
     ui->cbMidiOut->setCurrentIndex(0);
+    ui->cbMidiOut->setVisible(false);   // only one choice: no need to show it
+    ui->label_3->setVisible(false);
 
 
     // Midi In device
@@ -396,22 +398,13 @@ void SettingsDialog::initDeviceTab()
     connect(ui->sliderBuffer, SIGNAL(valueChanged(int)), this, SLOT(onSliderBufferValueChanged(int)));
 
     // ---- Audio quality -------------------------------------------------------------------------------------
-    // Up to 96 kHz, Sinc interpolation, up to 1000 voices, latency down to 10 ms. All of it is free.
+    // Voices, reverb strength. Sample rate is fixed at 44.1 kHz and the interpolation is linear.
     if (QVBoxLayout *vl = qobject_cast<QVBoxLayout *>(ui->groupBox_12->parentWidget()->layout()))
     {
         QGroupBox *box = new QGroupBox(QString::fromUtf8("คุณภาพเสียง"), ui->groupBox_12->parentWidget());
         QGridLayout *g = new QGridLayout(box);
 
         auto pro = [](const QString &t, bool) { return t; };
-
-        QComboBox *cbRate = new QComboBox(box);
-        const int rates[] = { 44100, 48000, 88200, 96000 };
-        for (int r : rates)
-            cbRate->addItem(pro(QString::number(r) + QStringLiteral(" Hz"), r != 44100), r);
-        cbRate->setCurrentIndex(qMax(0, cbRate->findData(synth->sampleRateHz())));
-
-        QCheckBox *chSinc = new QCheckBox(pro(QString::fromUtf8("Sinc interpolation (เสียงเนียนขึ้น ใช้ CPU เพิ่มเล็กน้อย)"), true), box);
-        chSinc->setChecked(synth->isSincInterpolation());
 
         QComboBox *cbVoices = new QComboBox(box);
         const int vcs[] = { 256, 500, 750, 1000 };
@@ -423,14 +416,6 @@ void SettingsDialog::initDeviceTab()
             "ความถี่สูงและค่าความหน่วงต่ำจะเห็นผลเต็มที่เมื่อใช้ ASIO หรือซาวด์การ์ดที่รองรับ"), box);
         note->setWordWrap(true);
 
-        {   // the sample rate now lives in the "Audio device" panel; this old row stays hidden
-            QLabel *lbOldRate = new QLabel(QString::fromUtf8("ความถี่เอาต์พุต (Sample rate) :"), box);
-            lbOldRate->setVisible(false);
-            cbRate->setVisible(false);
-            g->addWidget(lbOldRate, 0, 0);
-            g->addWidget(cbRate, 0, 1);
-        }
-        g->addWidget(chSinc, 1, 0, 1, 2);
         g->addWidget(new QLabel(QString::fromUtf8("จำนวนเสียงสูงสุด (Voices) :"), box), 2, 0);
         g->addWidget(cbVoices, 2, 1);
         QComboBox *cbRv = new QComboBox(box);
@@ -447,19 +432,8 @@ void SettingsDialog::initDeviceTab()
         g->addWidget(note, 4, 0, 1, 2);
         g->setColumnStretch(1, 1);
         vl->insertWidget(vl->indexOf(ui->groupBox_12) + 1, box);
+        ui->groupBox_12->setVisible(false);   // "Midi Synthesizer" box (32-bit float, effects, latency) is not shown any more; the latency lives in the audio device panel
 
-        // the chosen value is applied only after the licence check; otherwise the box goes back to what it was
-        connect(cbRate, QOverload<int>::of(&QComboBox::activated), this, [this, cbRate, synth](int i) {
-            const int hz = cbRate->itemData(i).toInt();
-            if (!mainWin->midiPlayer()->isPlayerStopped())
-                mainWin->stop();
-            synth->setSampleRate(hz);
-            settings->setValue("SynthSampleRate", hz);
-        });
-        connect(chSinc, &QCheckBox::clicked, this, [this, chSinc, synth](bool on) {
-            synth->setSincInterpolation(on);
-            settings->setValue("SynthSinc", on);
-        });
         connect(cbVoices, QOverload<int>::of(&QComboBox::activated), this, [this, cbVoices, synth](int i) {
             const int n = cbVoices->itemData(i).toInt();
             synth->setVoices(n);
@@ -499,8 +473,13 @@ void SettingsDialog::initDeviceTab()
         dg->addWidget(btnTest, 1, 2);
         dg->addWidget(new QLabel(QStringLiteral("Active output channels:"), dev), 2, 0, Qt::AlignRight | Qt::AlignTop);
         dg->addWidget(chFrame, 2, 1, 1, 2);
-        dg->addWidget(new QLabel(QStringLiteral("Sample rate:"), dev), 3, 0, Qt::AlignRight | Qt::AlignVCenter);
-        dg->addWidget(cbSr, 3, 1, 1, 2);
+        {   // the sample rate is fixed at 44.1 kHz: the box stays hidden (its code still keeps the ASIO driver in step)
+            QLabel *lbSr = new QLabel(QStringLiteral("Sample rate:"), dev);
+            lbSr->setVisible(false);
+            cbSr->setVisible(false);
+            dg->addWidget(lbSr, 3, 0, Qt::AlignRight | Qt::AlignVCenter);
+            dg->addWidget(cbSr, 3, 1, 1, 2);
+        }
         dg->addWidget(new QLabel(QStringLiteral("Audio buffer size:"), dev), 4, 0, Qt::AlignRight | Qt::AlignVCenter);
         dg->addWidget(cbBuf, 4, 1, 1, 2);
         dg->addWidget(cbSplit, 5, 0, 1, 3);
