@@ -1718,7 +1718,7 @@ void MainWindow::applyConfigLive()
         if (asio < 0 && aout != synth->defaultDevice())
             synth->setDefaultDevice(aout);
 
-        synth->setSampleRate(pro ? app.value("SynthSampleRate", 44100).toInt() : 44100);
+        synth->setSampleRate(app.value("SynthSampleRate", 44100).toInt());
         synth->setUsetFloattingPoint(app.value("SynthFloatPoint", true).toBool());
         synth->setUseFXRC(app.value("SynthUseFXRC", false).toBool());
     }
