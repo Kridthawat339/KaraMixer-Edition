@@ -38,6 +38,7 @@ public:
     QLabel *fxHint = nullptr;
     bool mutePlaced = false;
     bool columnPlaced = false;
+    int foldDrop = 0;                 // pixels the strips are folded by (PAN / REVERB row hidden)
     QWidget *trimBox = nullptr;
     QLabel *trimCaption = nullptr;
     QPushButton *unityBtn = nullptr;
@@ -256,12 +257,24 @@ public:
     {
         if (!trimBox) return;
         drop = qMax(0, drop);
-        if (trimCaption) trimCaption->setVisible(drop <= 0);
-        // folded: the whole TRIM block goes (only MUTE stays), the strip is too short for it
-        for (QWidget *w : { static_cast<QWidget *>(unityBtn), static_cast<QWidget *>(trimDn), static_cast<QWidget *>(trimUp) })
-            if (w) w->setVisible(drop <= 0);
+        foldDrop = drop;
+        updateTrimVisibility();
         setMinimumHeight(qMax(0, 398 - drop));
         updateGeometry();
+    }
+
+    // The TRIM block (caption, - / + row, 0 dB button) is shown only as far as it really fits in the box the mixer
+    // gave it: on a small screen the strips are short and the box is small, and a block that does not fit used to
+    // spill over the HIDE button (text drawn on top of text). Folded strips: the whole block goes.
+    void updateTrimVisibility()
+    {
+        if (!trimBox) return;
+        const int h = trimBox->height();
+        const bool open = foldDrop <= 0;
+        if (trimCaption) trimCaption->setVisible(open && h >= 80);
+        if (unityBtn)    unityBtn->setVisible(open && h >= 62);
+        if (trimDn)      trimDn->setVisible(open && h >= 30);
+        if (trimUp)      trimUp->setVisible(open && h >= 30);
     }
 
     // Line the fader, meter and dB read-out up with a strip's (the mixer measures that strip): FX box `fxHeight`
@@ -281,6 +294,7 @@ public:
         vu->setGeometry(faderR.x() + 48 + 4, faderR.y(), 14, faderR.height());
         lbDb->setGeometry(dbR);
         trimBox->setGeometry(trimR);
+        updateTrimVisibility();
     }
 
     void placeHide(const QRect &r)
@@ -297,19 +311,35 @@ public:
         btnMute->raise();
     }
 
+    // Back to the built-in placement (used when a measured placement came out of the frame - e.g. on a small screen /
+    // odd DPI the reference strip was not laid out yet): fader, meter, read-out, MUTE and HIDE are all inside the frame.
+    void useDefaultPlacement(bool column = true, bool mute = true, bool hide = true)
+    {
+        if (column) { columnPlaced = false; applyDefaultColumn(); }
+        if (mute && btnMute) { mutePlaced = false; btnMute->setGeometry(3, height() - 24, width() - 6, 22); btnMute->raise(); }
+        if (hide && btnHide) { hidePlaced = false; btnHide->setGeometry(3, height() - 24 - 22 - 6, width() - 6, 22); btnHide->raise(); }
+    }
+
 protected:
+    void applyDefaultColumn()
+    {
+        if (!fader || !vu || !lbDb || !trimBox)
+            return;
+        const int top = 76, fh = qMax(100, height() - top - 4 - 22 - 4 - 18 - 4 - 70);
+        fader->setGeometry(3, top, 48, fh);
+        vu->setGeometry(3 + 48 + 4, top, 14, fh);
+        lbDb->setGeometry(3, top + fh + 4, width() - 6, 18);
+        trimBox->setGeometry(3, top + fh + 26, width() - 6, qMax(0, height() - (top + fh + 26) - 28 - 28));   // ends above HIDE
+        updateTrimVisibility();
+    }
+
     void resizeEvent(QResizeEvent *e) override
     {
         QFrame::resizeEvent(e);
         if (!mutePlaced && btnMute)
             btnMute->setGeometry(3, height() - 24, width() - 6, 22);
-        if (!columnPlaced && fader && vu && lbDb && trimBox) {   // sensible default until the mixer has measured a real strip
-            const int top = 76, fh = qMax(100, height() - top - 4 - 22 - 4 - 18 - 4 - 70);
-            fader->setGeometry(3, top, 48, fh);
-            vu->setGeometry(3 + 48 + 4, top, 14, fh);
-            lbDb->setGeometry(3, top + fh + 4, width() - 6, 18);
-            trimBox->setGeometry(3, top + fh + 26, width() - 6, qMax(0, height() - (top + fh + 26) - 28));
-        }
+        if (!columnPlaced)   // sensible default until the mixer has measured a real strip
+            applyDefaultColumn();
         if (onResized)
             onResized();
     }

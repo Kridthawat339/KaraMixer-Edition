@@ -31,6 +31,10 @@ public:
     void reset();
 
 private:
+    // true when the plug-in is really running on a stream; when it could not be loaded (or the strip has no stream yet)
+    // the saved state is kept in tempChunk / tempParams / programIndex so that saving the settings does not erase it
+    bool live() const { return stream != 0 && fx != 0; }
+
     QString vstFile;
 
     int defaultProgramIndex = 0;

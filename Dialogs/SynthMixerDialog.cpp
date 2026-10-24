@@ -611,6 +611,8 @@ void SynthMixerDialog::setVSTVendorMenu()
         connect(action, SIGNAL(triggered()), &signalVstActionMapper, SLOT(map()));
         signalVstActionMapper.setMapping(action, QString::number(vst.uniqueID));
     }
+
+    restoreOrphanFx();   // saved effects that were waiting for their plug-in
 }
 
 #endif
@@ -626,6 +628,61 @@ void SynthMixerDialog::warnVstNotLoaded(const QString &name)
         + (why.empty() ? QString() : QString("\n\n") + QString::fromUtf8(why.c_str()))
         + QString::fromUtf8("\n\nสาเหตุที่พบบ่อย: เป็น VST instrument (ไม่ใช่เอฟเฟกต์), บิตไม่ตรงกับโปรแกรม (โปรแกรม 32 บิตใช้ได้เฉพาะ 32 บิต, 64 บิตใช้ได้เฉพาะ 64 บิต), หรือปลั๊กอินติดระบบลิขสิทธิ์\nรายละเอียด: โฟลเดอร์ .KaraMixer ไฟล์ vst3.log"));
 #endif
+}
+
+// put a saved state on an effect that has just been created: the chunk is the complete plug-in state (program /
+// parameters would only revert it); without a chunk the program and parameters are used
+void SynthMixerDialog::applySavedFx(FX *fx, const OrphanFx &o)
+{
+    const bool haveChunk = fx->fxType() == FXType::VSTEffects && o.chunk.length() > 0;
+    if (haveChunk) {
+        fx->setChunk(o.chunk);
+    } else {
+        fx->setProgram(o.program);
+        if (!o.params.isEmpty())
+            fx->setParams(o.params);
+    }
+}
+
+// saved effects that had no plug-in at start-up: load them now if the plug-in has appeared in the VST list
+void SynthMixerDialog::restoreOrphanFx()
+{
+    if (orphanFx.isEmpty() && orphanMaster.isEmpty())
+        return;
+
+    struct RestoreGuard { bool &f; RestoreGuard(bool &x) : f(x) { f = true; } ~RestoreGuard() { f = false; } } restoreGuard(restoringFx);
+    const QMap<uint, VSTNamePath> list = synth->VSTList();
+
+    for (auto it = orphanFx.begin(); it != orphanFx.end(); ++it)
+    {
+        QList<OrphanFx> &lst = it.value();
+        for (int k = 0; k < lst.count(); )
+        {
+            if (!list.contains(lst[k].uid)) { ++k; continue; }
+            addToMaster = false;
+            currentType = static_cast<InstrumentType>(it.key());
+            FX *fx = addFX(QString::number(lst[k].uid), lst[k].bypass);
+            if (fx) {
+                applySavedFx(fx, lst[k]);
+                lst.removeAt(k);
+            } else {
+                ++k;
+            }
+        }
+    }
+
+    for (int k = 0; k < orphanMaster.count(); )
+    {
+        if (!list.contains(orphanMaster[k].uid)) { ++k; continue; }
+        addToMaster = false;
+        FX *fx = addMasterFX(orphanMaster[k].uid, orphanMaster[k].bypass);
+        if (fx) {
+            applySavedFx(fx, orphanMaster[k]);
+            orphanMaster.removeAt(k);
+        } else {
+            ++k;
+        }
+    }
 }
 
 void SynthMixerDialog::setFXToSynth()
@@ -648,23 +705,27 @@ void SynthMixerDialog::setFXToSynth()
 
         for (int i=0; i<vstUid.count(); i++)
         {
-            FX *fx = this->addFX(QString::number(vstUid[i]), vstBypass[i]);
+            OrphanFx o;
+            o.uid = vstUid[i];
+            o.bypass = i < vstBypass.count() ? vstBypass[i] : false;
+            o.program = i < vstPrograms.length() ? vstPrograms[i] : 0;
+            if (i < vstParams.length())
+                o.params = vstParams[i];
+            if (i < vstChunks.length())
+                o.chunk = vstChunks[i];
+
+            FX *fx = this->addFX(QString::number(vstUid[i]), o.bypass);
 
             if (fx == nullptr)
+            {
+                // the plug-in is not in the VST list this time (scan skipped / failed): keep its saved state so the
+                // next save does not erase it
+                if (o.uid >= BUILTIN_FX_COUNT)
+                    orphanFx[static_cast<int>(t)].append(o);
                 continue;
-
-            bool haveChunk = fx->fxType() == FXType::VSTEffects
-                          && i < vstChunks.length() && vstChunks[i].length() > 0;
-
-            if (haveChunk) {
-                // full plugin state; program/params would only revert it
-                fx->setChunk(vstChunks[i]);
-            } else {
-                if (i < vstPrograms.length())
-                    fx->setProgram(vstPrograms[i]);
-                if (i < vstParams.length())
-                    fx->setParams(vstParams[i]);
             }
+
+            applySavedFx(fx, o);
         }
 
     }
@@ -681,20 +742,24 @@ void SynthMixerDialog::setFXToSynth()
         addToMaster = false;
         for (int i = 0; i < vstUid.count(); i++)
         {
-            FX *fx = this->addMasterFX(vstUid[i], i < vstBypass.count() ? vstBypass[i] : false);
-            if (fx == nullptr)
-                continue;
+            OrphanFx o;
+            o.uid = vstUid[i];
+            o.bypass = i < vstBypass.count() ? vstBypass[i] : false;
+            o.program = i < vstPrograms.length() ? vstPrograms[i] : 0;
+            if (i < vstParams.length())
+                o.params = vstParams[i];
+            if (i < vstChunks.length())
+                o.chunk = vstChunks[i];
 
-            const bool haveChunk = fx->fxType() == FXType::VSTEffects
-                                && i < vstChunks.length() && vstChunks[i].length() > 0;
-            if (haveChunk) {
-                fx->setChunk(vstChunks[i]);
-            } else {
-                if (i < vstPrograms.length())
-                    fx->setProgram(vstPrograms[i]);
-                if (i < vstParams.length())
-                    fx->setParams(vstParams[i]);
+            FX *fx = this->addMasterFX(o.uid, o.bypass);
+            if (fx == nullptr)
+            {
+                if (o.uid >= BUILTIN_FX_COUNT)
+                    orphanMaster.append(o);
+                continue;
             }
+
+            applySavedFx(fx, o);
         }
     }
 
@@ -956,11 +1021,21 @@ void SynthMixerDialog::settingValues()
     st.endArray();
 
     // Master strip effects
-    st.setValue("MasterFxUid", QVariant::fromValue(synth->masterFxUids()));
-    st.setValue("MasterFxBypass", QVariant::fromValue(synth->masterFxBypass()));
-    st.setValue("MasterFxPrograms", QVariant::fromValue(synth->masterFxProgram()));
-    st.setValue("MasterFxParams", QVariant::fromValue(synth->masterFxParams()));
-    st.setValue("MasterFxChunks", QVariant::fromValue(synth->masterFxChunks()));
+    {
+        QList<uint> uids = synth->masterFxUids();
+        QList<bool> byp = synth->masterFxBypass();
+        QList<int> progs = synth->masterFxProgram();
+        QList<QList<float>> pars = synth->masterFxParams();
+        QList<QByteArray> chunks = synth->masterFxChunks();
+        for (const OrphanFx &o : orphanMaster) {   // effects whose plug-in was missing at start-up stay saved
+            uids << o.uid; byp << o.bypass; progs << o.program; pars << o.params; chunks << o.chunk;
+        }
+        st.setValue("MasterFxUid", QVariant::fromValue(uids));
+        st.setValue("MasterFxBypass", QVariant::fromValue(byp));
+        st.setValue("MasterFxPrograms", QVariant::fromValue(progs));
+        st.setValue("MasterFxParams", QVariant::fromValue(pars));
+        st.setValue("MasterFxChunks", QVariant::fromValue(chunks));
+    }
 
 
     LEDVu *vu = chInstMap.first()->vuBar();
@@ -1015,20 +1090,19 @@ void SynthMixerDialog::settingValues()
         st.setValue("VSTi", synth->useVSTi(t));
         st.setValue("ExtMidiOut", synth->extMidiOut(t));
 
-        QVariant v = QVariant::fromValue(synth->fxUids(t));
-        st.setValue("VstUid", v);
-
-        QVariant bypass = QVariant::fromValue(synth->fxBypass(t));
-        st.setValue("VstBypass", bypass);
-
-        QVariant vstPrograms = QVariant::fromValue(synth->fxProgram(t));
-        st.setValue("VstPrograms", vstPrograms);
-
-        QVariant vstParams = QVariant::fromValue(synth->fxParams(t));
-        st.setValue("VstParams", vstParams);
-
-        QVariant chunks = QVariant::fromValue(synth->fxChunks(t));
-        st.setValue("VstChunks", chunks);
+        QList<uint> fxU = synth->fxUids(t);
+        QList<bool> fxB = synth->fxBypass(t);
+        QList<int> fxP = synth->fxProgram(t);
+        QList<QList<float>> fxA = synth->fxParams(t);
+        QList<QByteArray> fxC = synth->fxChunks(t);
+        for (const OrphanFx &o : orphanFx.value(static_cast<int>(t))) {   // plug-in was missing at start-up: keep its state
+            fxU << o.uid; fxB << o.bypass; fxP << o.program; fxA << o.params; fxC << o.chunk;
+        }
+        st.setValue("VstUid", QVariant::fromValue(fxU));
+        st.setValue("VstBypass", QVariant::fromValue(fxB));
+        st.setValue("VstPrograms", QVariant::fromValue(fxP));
+        st.setValue("VstParams", QVariant::fromValue(fxA));
+        st.setValue("VstChunks", QVariant::fromValue(fxC));
     }
     st.endArray();
 }
@@ -1203,11 +1277,14 @@ void SynthMixerDialog::syncQuickChecks()
     }
 }
 
-void SynthMixerDialog::showEvent(QShowEvent *)
+void SynthMixerDialog::showEvent(QShowEvent *ev)
 {
     // Coming back from the karaoke auto-hide the window is exactly as it was left: re-fitting and re-aligning it
     // on every return made it lag and slowly pushed the frames out of place. Only a real first show does that.
-    const bool quick = property("kmAutoRestore").toBool() && fittedOnce;
+    // Also "quick" when the window comes back from being minimised (spontaneous show) or while the strips are hidden
+    // (master-only view): fitToContent() there measured the layout without the hidden panels and made the window
+    // too short, which cut the master frame and pushed MUTE out of view.
+    const bool quick = (property("kmAutoRestore").toBool() || (ev && ev->spontaneous()) || stripsHidden) && fittedOnce;
     setProperty("kmAutoRestore", false);
     if (!quick) {
         fitToContent();
@@ -1426,8 +1503,23 @@ void SynthMixerDialog::alignMasterMute()
             const QRect fR(3, rTop - sTop, 48, refSl->height());
             const QRect dR(3, refDb->mapTo(this, QPoint(0, 0)).y() - sTop, masterStrip->width() - 6, refDb->height());
             const int tTop = dR.bottom() + 4;
-            const QRect tR(3, tTop, masterStrip->width() - 6, qMax(0, tagY - 4 - tTop));
-            masterStrip->placeColumn(fR, dR, tR);
+            // the TRIM block must end ABOVE the HIDE button (which sits right over MUTE): otherwise on a short window
+            // its lowest button (0 dB) is drawn on top of HIDE
+            const int hideTopY = tagY - tag->height() - 6;
+            const QRect tR(3, tTop, masterStrip->width() - 6, qMax(0, hideTopY - 4 - tTop));
+            // sanity check: every part must lie inside the master frame. On some PCs (small screen, odd DPI) the
+            // reference strip is measured before it has been laid out and the numbers come out wrong: the master
+            // then shows an empty frame. In that case use the built-in placement instead.
+            const int mH = masterStrip->height(), mW = masterStrip->width();
+            const bool colOk = fR.width() > 10 && fR.height() >= 60 && fR.y() >= 0 && fR.bottom() < mH
+                            && dR.y() >= 0 && dR.bottom() < mH && dR.width() > 10
+                            && tR.y() >= 0 && tR.bottom() < mH && mW > 20;
+            if (colOk) {
+                masterStrip->placeColumn(fR, dR, tR);
+            } else {
+                logLayout(QStringLiteral("bad column placement -> default"));
+                masterStrip->useDefaultPlacement(true, false, false);
+            }
         }
         layout()->activate();
 
@@ -1435,9 +1527,22 @@ void SynthMixerDialog::alignMasterMute()
         const int stripTop = masterStrip->mapTo(this, QPoint(0, 0)).y();
         {
             const int mw = qMin(tag->width(), masterStrip->width() - 2);
-            masterStrip->placeMute(QRect((masterStrip->width() - mw) / 2, tagTop - stripTop, mw, tag->height()));   // same size as a strip's name tag
+            const QRect mR((masterStrip->width() - mw) / 2, tagTop - stripTop, mw, tag->height());                       // same size as a strip's name tag
             // HIDE sits right above MUTE, same size (the empty box under the read-out / TRIM block)
-            masterStrip->placeHide(QRect((masterStrip->width() - mw) / 2, tagTop - stripTop - tag->height() - 6, mw, tag->height()));
+            const QRect hR((masterStrip->width() - mw) / 2, tagTop - stripTop - tag->height() - 6, mw, tag->height());
+            const int mH2 = masterStrip->height();
+            const bool muteOk = mR.width() > 10 && mR.height() > 8 && mR.y() >= 0 && mR.bottom() < mH2;
+            const bool hideOk = hR.width() > 10 && hR.height() > 8 && hR.y() >= 0 && hR.bottom() < mH2;
+            if (muteOk)
+                masterStrip->placeMute(mR);
+            else {
+                logLayout(QStringLiteral("bad mute placement -> default"));
+                masterStrip->useDefaultPlacement(false, true, false);
+            }
+            if (hideOk)
+                masterStrip->placeHide(hR);
+            else
+                masterStrip->useDefaultPlacement(false, false, true);
         }   // same size as a strip's name tag
     }
     busy = false;
@@ -2253,6 +2358,8 @@ void SynthMixerDialog::openFxDialog(FX *fx, const QString &ownerName)
             }
 
             dlg->setAttribute(Qt::WA_DeleteOnClose);
+            // save the effect's settings as soon as its window is closed (not only at program exit)
+            connect(dlg, &QObject::destroyed, this, [this]() { settingValues(); });
             dlg->show();
         }
         #endif
@@ -2334,6 +2441,7 @@ void SynthMixerDialog::showVSTiDialog(InstrumentType vstiIndexType)
     }
 
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dlg, &QObject::destroyed, this, [this]() { settingValues(); });
     dlg->show();
     #endif
 }

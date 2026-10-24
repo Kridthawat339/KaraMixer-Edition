@@ -104,7 +104,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { $iscc = "$env:ProgramFiles\Inno Setup 6\ISCC.exe" }
           if (-not (Test-Path $iscc)) { throw "Inno Setup 6 is not installed" }
-          & $iscc "/DAppVersion=4.0.0" "_iss_setup\karamixer-${{ matrix.arch }}.iss"
+          & $iscc "/DAppVersion=4.0.1" "_iss_setup\karamixer-${{ matrix.arch }}.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Installer goes to the Releases page

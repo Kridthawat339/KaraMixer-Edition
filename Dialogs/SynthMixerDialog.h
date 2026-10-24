@@ -134,6 +134,21 @@ private:
     int currentFxIndexToRemove;
     void warnVstNotLoaded(const QString &name);
     bool restoringFx = false;   // true while saved effects are loaded (no warning boxes then)
+
+    // A saved VST effect whose plug-in was not in the VST list at start-up (scan skipped / failed / not ready) is kept
+    // here and written back when the settings are saved, so its settings are not lost. It is loaded as soon as the
+    // plug-in shows up in the list (restoreOrphanFx, called after a VST scan).
+    struct OrphanFx {
+        uint uid = 0;
+        bool bypass = false;
+        int program = 0;
+        QList<float> params;
+        QByteArray chunk;
+    };
+    QMap<int, QList<OrphanFx>> orphanFx;     // strip (InstrumentType as int) -> effects
+    QList<OrphanFx> orphanMaster;            // master strip effects
+    void restoreOrphanFx();
+    void applySavedFx(FX *fx, const OrphanFx &o);
     bool addToMaster = false;   // FX menus add to the master strip instead of currentType
 
     bool staysOnTop = false;

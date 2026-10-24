@@ -64,7 +64,7 @@ public:
 
 protected:
     DWORD stream;
-    HFX fx;
+    HFX fx = 0;
     int priority = 1;
     bool _on;
     uint _uids = 0;

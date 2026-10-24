@@ -1,11 +1,11 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#define VER_FILEVERSION             4,0,0
-#define VER_FILEVERSION_STR         "v.4.0.0\0"
+#define VER_FILEVERSION             4,0,1
+#define VER_FILEVERSION_STR         "v.4.0.1\0"
 
-#define VER_PRODUCTVERSION          4,0,0
-#define VER_PRODUCTVERSION_STR      "v.4.0.0\0"
+#define VER_PRODUCTVERSION          4,0,1
+#define VER_PRODUCTVERSION_STR      "v.4.0.1\0"
 
 #define VER_COMPANYNAME_STR         "KaraMixer"
 #define VER_FILEDESCRIPTION_STR     "KaraMixer Edition"

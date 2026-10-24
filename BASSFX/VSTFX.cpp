@@ -31,7 +31,7 @@ VSTFX::VSTFX(const QString &vstFile, DWORD stream, int priority) : FX(priority)
 
 VSTFX::~VSTFX()
 {
-    if (stream != 0)
+    if (live())
     {
         bv::ChannelRemoveDSP(stream, fx);
     }
@@ -77,7 +77,7 @@ uint VSTFX::uids()
 
 int VSTFX::program()
 {
-    if (stream == 0)
+    if (!live())
     {
         return programIndex;
     }
@@ -89,7 +89,7 @@ int VSTFX::program()
 
 void VSTFX::setProgram(int programIndex)
 {
-    if (stream ==0)
+    if (!live())
     {
         this->programIndex = programIndex;
     }
@@ -101,7 +101,7 @@ void VSTFX::setProgram(int programIndex)
 
 QByteArray VSTFX::chunk()
 {
-    if (stream == 0)
+    if (!live())
     {
         return tempChunk;
     }
@@ -109,13 +109,15 @@ QByteArray VSTFX::chunk()
     {
         DWORD length = 0;
         char *cnk = bv::GetChunk(fx, false, &length);
-        return QByteArray(cnk, length);
+        if (!cnk || length == 0)
+            return tempChunk;        // this plug-in gave nothing: keep the last good state
+        return QByteArray(cnk, int(length));
     }
 }
 
 void VSTFX::setChunk(const QByteArray &cnk)
 {
-    if (stream == 0)
+    if (!live())
     {
         this->tempChunk = cnk;
     }
@@ -129,7 +131,7 @@ void VSTFX::setChunk(const QByteArray &cnk)
 
 QList<float> VSTFX::params()
 {
-    if (stream == 0)
+    if (!live())
     {
         return tempParams;
     }
@@ -146,7 +148,7 @@ QList<float> VSTFX::params()
 
 void VSTFX::setParams(const QList<float> &params)
 {
-    if (stream == 0)
+    if (!live())
     {
         tempParams.clear();
         tempParams = params;
@@ -161,11 +163,14 @@ void VSTFX::setParams(const QList<float> &params)
 
 void VSTFX::setStreamHandle(DWORD stream)
 {
+    // keep what the running plug-in holds now (if it is not running, the state already kept stays as it is)
     tempChunk = chunk();
     tempParams = params();
     programIndex = program();
-    bv::ChannelRemoveDSP(this->stream, fx);
+    if (live())
+        bv::ChannelRemoveDSP(this->stream, fx);
     this->stream = stream;
+    fx = 0;
 
     if (stream != 0)
     {
@@ -194,7 +199,7 @@ void VSTFX::setBypass(bool b)
 {
     _on = !b;
 
-    if (stream == 0)
+    if (!live())
         return;
 
     bv::SetBypass(fx, b);
