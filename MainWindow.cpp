@@ -50,6 +50,8 @@
 #include "Midi/HNKFile.h"
 #include "Midi/AsioOutput.h"
 #include "Dialogs/AboutDialog.h"
+#include "Dialogs/DiagnosticsDialog.h"
+#include "Widgets/KaraokeLauncher.h"
 #include "Dialogs/MapSoundfontDialog.h"
 #include "Dialogs/MapChannelDialog.h"
 #include "Dialogs/BusDialog.h"
@@ -238,6 +240,7 @@ MainWindow::MainWindow(QWidget *parent) :
         BASS_SetConfig(BASS_CONFIG_BUFFER, synBuf);
         player->setMidiOut(oPort);
         player->setMidiIn(iPort);
+        player->setIgnoreExtMixer(settings->value("IgnoreKaraokeMixer", true).toBool());
         player->setVolume(vl);
         player->setMasterMute(settings->value("MasterMute", false).toBool());
         player->midiSynthesizer()->setIgnoreDrumPitch(settings->value("IgnoreDrumPitch", true).toBool());
@@ -1861,7 +1864,40 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
         actionExit.setIcon(MenuIcons::make(MenuIcons::Exit));
         MidiSynthesizer *syn = player->midiSynthesizer();
 
-        QAction *act = menu.addAction(MenuIcons::make(MenuIcons::Bus), tr("บัสกรุ๊ป..."));
+        // karaoke program: opened from here like YouTube (chosen once, then remembered)
+        QAction *act = menu.addAction(MenuIcons::make(MenuIcons::Open), tr("เปิดโปรแกรมคาราโอเกะ"));
+        act->setToolTip(tr("เปิดโปรแกรมคาราโอเกะที่เลือกไว้ (ครั้งแรกจะให้เลือกโปรแกรม)"));
+        connect(act, &QAction::triggered, this, [this]() { KaraokeLauncher::launch(dialogParent()); });
+
+        act = menu.addAction(MenuIcons::make(MenuIcons::Settings), tr("เปลี่ยนโปรแกรมคาราโอเกะ..."));
+        connect(act, &QAction::triggered, this, [this]() { KaraokeLauncher::choose(dialogParent()); });
+
+        act = menu.addAction(tr("เปิด-ปิดโปรแกรมคาราโอเกะพร้อมมิกเซอร์"));
+        act->setToolTip(tr("ติ๊ก: เปิดมิกเซอร์แล้วเปิดโปรแกรมคาราโอเกะตาม และเมื่อปิดมิกเซอร์ก็ปิดโปรแกรมคาราโอเกะด้วย"));
+        act->setCheckable(true);
+        act->setChecked(KaraokeLauncher::autoLaunch());
+        connect(act, &QAction::toggled, this, [this, act](bool on) {
+            if (on && KaraokeLauncher::path().isEmpty() && !KaraokeLauncher::choose(dialogParent())) {
+                on = false;   // nothing chosen: cannot start anything, so the tick goes off again
+                act->blockSignals(true);
+                act->setChecked(false);
+                act->blockSignals(false);
+            }
+            KaraokeLauncher::setAutoLaunch(on);
+        });
+
+        act = menu.addAction(QString::fromUtf8("ล็อกค่ามิกเซอร์ (ไม่รับค่าเสียงจากมิกเซอร์ของโปรแกรมคาราโอเกะ)"));
+        act->setToolTip(QString::fromUtf8("ใช้เมื่อโปรแกรมคาราโอเกะมีมิกเซอร์ในตัว (เช่น Extreme V3) แล้วค่าที่ปรับไว้ในมิกเซอร์นี้เพี้ยนหรือถูกตั้งค่าใหม่ "
+                                          "จะไม่รับ Volume / Pan / Expression / Reverb / Chorus / Reset Controllers จากโปรแกรมนั้น ส่วนโน้ตและเครื่องดนตรียังทำงานตามปกติ"));
+        act->setCheckable(true);
+        act->setChecked(player->ignoreExtMixer());
+        connect(act, &QAction::toggled, this, [this](bool on) {
+            player->setIgnoreExtMixer(on);
+            settings->setValue("IgnoreKaraokeMixer", on);
+        });
+        menu.addSeparator();
+
+        act = menu.addAction(MenuIcons::make(MenuIcons::Bus), tr("บัสกรุ๊ป..."));
         connect(act, SIGNAL(triggered()), this, SLOT(showBusGroupDialog()));
 
         act = menu.addAction(MenuIcons::make(MenuIcons::Speaker), tr("แยกอุปกรณ์เสียง/ลำโพง..."));
@@ -1875,6 +1911,16 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
         act = menu.addAction(MenuIcons::make(MenuIcons::Meter), tr("ตั้งค่า LED Meter..."));
         connect(act, &QAction::triggered, this, [this]() {
             QMetaObject::invokeMethod(synthMix, "showVuDlg");
+        });
+
+        act = menu.addAction(MenuIcons::make(MenuIcons::Reset), tr("รีเซ็ตตำแหน่งหน้าต่างมิกเซอร์"));
+        connect(act, &QAction::triggered, this, [this]() {
+            QMetaObject::invokeMethod(synthMix, "resetLayout");
+        });
+
+        act = menu.addAction(MenuIcons::make(MenuIcons::About), tr("ข้อมูลระบบ / Diagnostics..."));
+        connect(act, &QAction::triggered, this, [this]() {
+            DiagnosticsDialog::run(dialogParent(), midiPlayer()->midiSynthesizer());
         });
 
         act = menu.addAction(MenuIcons::make(MenuIcons::Phone), tr("ควบคุมผ่านมือถือ (QR Code)..."));
@@ -2006,6 +2052,24 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
     });
     leaveTimer.start();
 
+    // A long menu must never run off the screen (small laptop screens, high Windows scaling): the menu becomes
+    // scrollable (arrows at the ends, mouse wheel); when it is only a little too tall, the spacing is tightened first so
+    // that everything still fits without scrolling. The screen's own available height already follows the scaling.
+    {
+        QScreen *scr = QGuiApplication::screenAt(globalPos);
+        if (!scr)
+            scr = QGuiApplication::primaryScreen();
+        QString css = QStringLiteral("QMenu { menu-scrollable: 1; }");
+        menu.setStyleSheet(css);
+        menu.ensurePolished();
+        if (scr && menu.sizeHint().height() > scr->availableGeometry().height() - 16) {
+            css += QStringLiteral("QMenu { padding: 3px; }"
+                                  "QMenu::item { padding: 3px 24px 3px 18px; }"
+                                  "QMenu::separator { margin: 2px 8px; }");
+            menu.setStyleSheet(css);
+            menu.ensurePolished();
+        }
+    }
     menu.exec(globalPos);
     QMetaObject::invokeMethod(synthMix, "syncQuickChecks");
 }

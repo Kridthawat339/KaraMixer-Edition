@@ -33,6 +33,49 @@
 #include <cstddef>
 #include "Midi/MidiPlayer.h"
 
+// Real output peak (after every effect and the master volume): drives the master CLIP light. One DSP on the main mixer.
+namespace {
+struct PeakCtx { bool isFloat = true; bool decode = false; };
+PeakCtx g_peakCtx;
+std::atomic<float> g_outPeak{0.0f};
+
+void CALLBACK peakDspProc(HDSP, DWORD channel, void *buffer, DWORD length, void *user)
+{
+    const PeakCtx *c = static_cast<const PeakCtx *>(user);
+    float vol = 1.0f;
+    if (c->decode) {                       // ASIO: the main mixer only decodes, its volume comes from AsioOutput
+        if (AsioOutput::isActive())
+            vol = AsioOutput::gain();
+    } else if (!BASS_ChannelGetAttribute(channel, BASS_ATTRIB_VOL, &vol)) {
+        vol = 1.0f;
+    }
+    float pk = 0.0f;
+    if (c->isFloat) {
+        const float *p = static_cast<const float *>(buffer);
+        const size_t n = length / sizeof(float);
+        for (size_t i = 0; i < n; i++) {
+            const float a = std::fabs(p[i]);
+            if (a > pk) pk = a;
+        }
+    } else {
+        const short *p = static_cast<const short *>(buffer);
+        const size_t n = length / sizeof(short);
+        for (size_t i = 0; i < n; i++) {
+            const float a = std::fabs(float(p[i])) / 32768.0f;
+            if (a > pk) pk = a;
+        }
+    }
+    pk *= vol;
+    float cur = g_outPeak.load(std::memory_order_relaxed);
+    while (pk > cur && !g_outPeak.compare_exchange_weak(cur, pk, std::memory_order_relaxed)) {}
+}
+}
+
+float MidiSynthesizer::takeOutputPeak()
+{
+    return g_outPeak.exchange(0.0f, std::memory_order_relaxed);
+}
+
 // defined further down (used while the streams are created)
 namespace { void attachTrimDsp(InstrumentType t, DWORD handle); }
 
@@ -281,6 +324,16 @@ bool MidiSynthesizer::open()
     if (!mixers.isEmpty())
         for (FX *fx : masterFXs)
             fx->setStreamHandle(mixers[0].handle);
+
+    // output peak meter (master CLIP light): the last DSP on the main mixer
+    if (!mixers.isEmpty()) {
+        BASS_CHANNELINFO ci;
+        if (BASS_ChannelGetInfo(mixers[0].handle, &ci)) {
+            g_peakCtx.isFloat = (ci.flags & BASS_SAMPLE_FLOAT) != 0;
+            g_peakCtx.decode = (ci.flags & BASS_STREAM_DECODE) != 0;
+            BASS_ChannelSetDSP(mixers[0].handle, peakDspProc, &g_peakCtx, -500);
+        }
+    }
 
     // create midi and bus stream
     for (int i=0; i<HANDLE_STREAM_COUNT; i++)

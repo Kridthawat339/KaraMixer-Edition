@@ -133,6 +133,9 @@ HEADERS  += Widgets/PanKnob.h \
     Widgets/SongDetail.h \
     Widgets/Detail.h \
     Dialogs/AboutDialog.h \
+    Dialogs/DiagnosticsDialog.h \
+    Widgets/EventLog.h \
+    Widgets/KaraokeLauncher.h \
     Utils.h \
     Widgets/PlaybackButton.h \
     Widgets/FaderSlider.h \

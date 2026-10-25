@@ -36,6 +36,10 @@ public:
     bool hidePlaced = false;
     bool blinkDim = false;
     QLabel *fxHint = nullptr;
+    QPushButton *clipLed = nullptr;   // lights red when the output reaches 0 dBFS (clip); click = clear
+    bool clipLatched = false;
+    float peakMax = 0.0f;             // highest output peak since the last clear (linear)
+    double lastTipDb = -1000.0;
     bool mutePlaced = false;
     bool columnPlaced = false;
     int foldDrop = 0;                 // pixels the strips are folded by (PAN / REVERB row hidden)
@@ -188,6 +192,19 @@ public:
         btnHide->setToolTip(QString::fromUtf8("ซ่อนแถบมิกเซอร์ทั้งหมด เหลือเฉพาะ Master (กดอีกครั้งเพื่อแสดงทั้งหมด)"));
         btnHide->setStyleSheet(btnMute->styleSheet());   // same look; lit red while the strips are hidden
 
+        // CLIP light: a thin bar over the top of the level meter, lit (and held) when the real output reaches 0 dBFS
+        clipLed = new QPushButton(this);
+        clipLed->setFocusPolicy(Qt::NoFocus);
+        clipLed->setCursor(Qt::PointingHandCursor);
+        clipLed->setFlat(true);
+        updateClipLook();
+        QObject::connect(clipLed, &QPushButton::clicked, this, [this]() {
+            clipLatched = false;
+            peakMax = 0.0f;
+            lastTipDb = -1000.0;
+            updateClipLook();
+        });
+
         // while muted the MASTER tag blinks so nobody wonders where the sound went
         const QString tagOn  = lbName->styleSheet();
         const QString tagDim = "QLabel { background-color: #4a1820; color: #ff9aa5; border-radius: 4px;"
@@ -286,6 +303,47 @@ public:
         if (layout()) layout()->activate();
     }
 
+    // The real output level of the program (linear, 1.0 = 0 dBFS), fed by the mixer every ~50 ms.
+    void feedPeak(float lin)
+    {
+        if (!clipLed)
+            return;
+        if (lin > peakMax)
+            peakMax = lin;
+        if (lin >= 0.9999f && !clipLatched) {
+            clipLatched = true;
+            updateClipLook();
+        }
+        const double db = peakMax > 1e-6f ? 20.0 * std::log10(double(peakMax)) : -100.0;
+        if (std::fabs(db - lastTipDb) > 0.1) {
+            lastTipDb = db;
+            updateClipLook();
+        }
+    }
+
+    void updateClipLook()
+    {
+        if (!clipLed)
+            return;
+        clipLed->setStyleSheet(clipLatched
+            ? "QPushButton { background: #ff2030; border: 1px solid #ffb0b0; border-radius: 2px; }"
+            : "QPushButton { background: #3a1218; border: 1px solid #6a2530; border-radius: 2px; }"
+              "QPushButton:hover { border: 1px solid #d23342; }");
+        const QString peak = lastTipDb > -99.0 ? QString::number(lastTipDb, 'f', 1) + QStringLiteral(" dBFS")
+                                                : QStringLiteral("-inf");
+        clipLed->setToolTip(QString::fromUtf8(clipLatched
+            ? "CLIP: เสียงออกล้น 0 dBFS (ลดเฟเดอร์หรือเปิด Limiter ใน Mastering)\nPeak สูงสุด: "
+            : "ไม่มีเสียงล้น\nPeak สูงสุด: ") + peak + QString::fromUtf8("\n(กดเพื่อล้างค่า)"));
+    }
+
+    void layoutClip()
+    {
+        if (!clipLed || !vu)
+            return;
+        clipLed->setGeometry(vu->x(), vu->y(), vu->width(), 7);
+        clipLed->raise();
+    }
+
     // Absolute placement (this strip's coordinates) copied from a real strip.
     void placeColumn(const QRect &faderR, const QRect &dbR, const QRect &trimR)
     {
@@ -294,6 +352,7 @@ public:
         vu->setGeometry(faderR.x() + 48 + 4, faderR.y(), 14, faderR.height());
         lbDb->setGeometry(dbR);
         trimBox->setGeometry(trimR);
+        layoutClip();
         updateTrimVisibility();
     }
 
@@ -330,6 +389,7 @@ protected:
         vu->setGeometry(3 + 48 + 4, top, 14, fh);
         lbDb->setGeometry(3, top + fh + 4, width() - 6, 18);
         trimBox->setGeometry(3, top + fh + 26, width() - 6, qMax(0, height() - (top + fh + 26) - 28 - 28));   // ends above HIDE
+        layoutClip();
         updateTrimVisibility();
     }
 

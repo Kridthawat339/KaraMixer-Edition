@@ -671,6 +671,16 @@ void MidiPlayer::setMapChannelOutput(int ch, int port)
 
 void MidiPlayer::receiveMidiIn(std::vector<unsigned char> *message)
 {
+    if (_ignoreExtMixer && message->size() >= 3 && ((*message)[0] & 0xF0) == 0xB0) {
+        // the karaoke program's own mixer: its volume / pan / expression / reverb / chorus and "reset all controllers"
+        // would overwrite what was set here
+        switch ((*message)[1]) {
+        case 7: case 10: case 11: case 91: case 93: case 121:
+            return;
+        default:
+            break;
+        }
+    }
     _midiInEvent.setMessage(message);
     this->sendEvent(_midiInEvent);
 }

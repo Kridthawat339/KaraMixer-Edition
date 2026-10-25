@@ -33,6 +33,8 @@
 #include "Utils.h"
 #include "Theme.h"
 #include "Widgets/DialogSkin.h"
+#include "Widgets/EventLog.h"
+#include "Widgets/KaraokeLauncher.h"
 
 #ifdef __linux__
 #include <QFontDatabase>
@@ -62,6 +64,12 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain(VER_COMPANYDOMAIN_STR);
 
     registerMetaType();
+
+    // problem journal (~/.KaraMixer/events.log): Qt warnings / errors, crash address, "last run did not close normally"
+    EventLog::installHandlers();
+    EventLog::sessionStart();
+    EventLog::add(QStringLiteral("START"), QString::fromUtf8(VER_FILEVERSION_STR) + QStringLiteral("  ")
+                  + QSysInfo::prettyProductName() + QStringLiteral("  ") + QSysInfo::currentCpuArchitecture());
 
     QPixmap *pixmap = new QPixmap(":/Icons/App/karamixer-splash.png");
     QSplashScreen *splash = new QSplashScreen(*pixmap);
@@ -139,12 +147,23 @@ int main(int argc, char *argv[])
                            ahs.value("MixerAutoHideProgram", "").toString());
     }
 
+    if (KaraokeLauncher::autoLaunch())   // "open the karaoke program together with the mixer" (menu)
+        QTimer::singleShot(1500, mixer, []() { KaraokeLauncher::launch(nullptr, false); });
+
     splash->finish(mixer);
 
     delete splash;
     delete pixmap;
 
-    return a.exec();
+    // "open / close the karaoke program together with the mixer": when the mixer closes, ask the karaoke program to close
+    QObject::connect(&a, &QApplication::aboutToQuit, []() {
+        if (KaraokeLauncher::autoLaunch())
+            KaraokeLauncher::closeProgram();
+    });
+
+    const int exitCode = a.exec();
+    EventLog::sessionEnd();   // normal close: the "did not close normally" flag is removed
+    return exitCode;
 }
 
 

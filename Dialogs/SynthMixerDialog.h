@@ -74,6 +74,7 @@ private slots:
     void showVSTDirsDlg();
     void showVuDlg();
     void resetChannel();
+    void resetLayout();   // window back to its normal layout (menu: reset window layout)
     void setStaysOnTop(bool stay);
 
     void changeSoundfontPresets(int presets);

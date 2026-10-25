@@ -49,6 +49,9 @@ public:
     int  lockKickNumber()  { return _lockKickNumber; }
     int  lockBassNumber()  { return _lockBassBumber; }
     bool isLockDrum()   { return _lockDrum; }
+    // do not take volume / pan / reverb / chorus / reset-controllers from the MIDI-in (a karaoke program with its own mixer)
+    void setIgnoreExtMixer(bool v) { _ignoreExtMixer = v; }
+    bool ignoreExtMixer() const    { return _ignoreExtMixer; }
     bool isLockSnare()  { return _lockSnare; }
     bool isLockKick()   { return _lockKick; }
     bool isLockBass()   { return _lockBass; }
@@ -159,6 +162,7 @@ private:
     MidiEvent   _tempEvent, _midiInEvent;
     MidiEvent*  _playingEventPtr = nullptr;
 
+    bool    _ignoreExtMixer = true;
     bool    _lockDrum  = false;
     bool    _lockSnare = false;
     bool    _lockKick  = false;

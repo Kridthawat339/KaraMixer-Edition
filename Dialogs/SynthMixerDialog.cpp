@@ -4,6 +4,7 @@
 #include "MainWindow.h"
 
 #include <QMenu>
+#include "Widgets/EventLog.h"
 #include <QFileInfo>
 #include <QTimer>
 #include <QDir>
@@ -1303,6 +1304,21 @@ void SynthMixerDialog::showEvent(QShowEvent *ev)
     syncQuickChecks();
     connect(synth, SIGNAL(noteOnSended(InstrumentType,int,int,int,int)),
             this, SLOT(showPeakVU(InstrumentType,int,int,int,int)), Qt::UniqueConnection);
+    if (masterStrip && !findChild<QTimer *>(QStringLiteral("kmPeakTimer"))) {   // real output peak -> master CLIP light
+        QTimer *pt = new QTimer(this);
+        pt->setObjectName(QStringLiteral("kmPeakTimer"));
+        pt->setInterval(50);
+        connect(pt, &QTimer::timeout, this, [this]() {
+            if (isVisible() && masterStrip && synth) {
+                const float pk = synth->takeOutputPeak();
+                masterStrip->feedPeak(pk);
+                if (pk >= 0.9999f)   // journal (at most once per 5 s): when it happened and where the master fader was
+                    EventLog::add(QStringLiteral("CLIP"), QStringLiteral("output reached 0 dBFS, master fader ")
+                                  + MasterStrip::dbText(masterStrip->fader->level()), 5000);
+            }
+        });
+        pt->start();
+    }
 }
 
 // Fit the window to its content: strip areas as tall as their strips, window as tall as the layout.
@@ -2986,4 +3002,33 @@ void SynthMixerDialog::showLockMenu(QToolButton *btn, int kind)
     }
 
     syncQuickChecks();     // button lit = lock on; tooltips show the number
+}
+
+// Menu "reset window layout": back to the normal view, window refitted and brought fully onto the screen, master
+// strip placement recalculated. For a window that was dragged half off the screen, left in the master-only view, or
+// that came back wrong after a screen / scaling change. No mixer settings (levels, effects) are touched.
+void SynthMixerDialog::resetLayout()
+{
+    if (stripsHidden)
+        setStripsHidden(false);
+    fitToContent();
+    if (masterStrip)
+        masterStrip->useDefaultPlacement(true, true, true);
+
+    QScreen *scr = QGuiApplication::screenAt(geometry().center());
+    if (!scr)
+        scr = QGuiApplication::primaryScreen();
+    if (scr) {
+        const QRect a = scr->availableGeometry();
+        QRect g = frameGeometry();
+        int x = g.x(), y = g.y();
+        if (g.right() > a.right())   x -= g.right() - a.right();
+        if (g.bottom() > a.bottom()) y -= g.bottom() - a.bottom();
+        if (x < a.left()) x = a.left();
+        if (y < a.top())  y = a.top();
+        move(x, y);
+    }
+    logLayout(QStringLiteral("reset by user (menu)"));
+    QTimer::singleShot(0, this, [this]() { alignMasterMute(); });
+    QTimer::singleShot(150, this, [this]() { alignMasterMute(); });
 }

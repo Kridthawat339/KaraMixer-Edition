@@ -192,6 +192,8 @@ public:
     int  sampleRateHz() const { return sampleRate; }
     void setSampleRate(int hz);                 // rebuilds the audio chain (playback must be stopped)
     bool isSincInterpolation() const { return sincInter; }
+    float takeOutputPeak();                         // highest output sample (linear, 1.0 = 0 dBFS) since the last call: master CLIP light
+    DWORD mainMixerHandle() const { return mixers.isEmpty() ? 0 : mixers[0].handle; }
     void setSincInterpolation(bool on);         // applied to the running MIDI streams at once
     int  voices() const { return maxVoices; }
     void setVoices(int n);                      // applied to the running MIDI streams at once
