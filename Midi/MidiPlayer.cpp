@@ -12,6 +12,12 @@
 
 MidiPlayer::MidiPlayer(QObject *parent) : QObject(parent)
 {
+    for (int c = 0; c < 16; c++)
+        for (int n = 0; n < 128; n++) {
+            _playedNote[c][n] = -1;
+            _playedPort[c][n] = -1;
+        }
+
     _midiSeq = new MidiSequencer();
 
     _midiSynth  = new MidiSynthesizer();
@@ -202,9 +208,32 @@ int MidiPlayer::beatCount()
     return _midiSeq->beatCount();
 }
 
+// opens (once) the MIDI out port; nullptr when the port cannot be opened. RtMidi throws on a busy / missing port
+// (e.g. held by the karaoke program): uncaught, that ended the program
+MidiOut *MidiPlayer::openOut(int port)
+{
+    MidiOut *out = _midiOuts.value(port, nullptr);
+    if (out)
+        return out;
+    try {
+        out = new MidiOut();
+        out->openPort(port);
+    } catch (...) {
+        delete out;
+        return nullptr;
+    }
+    if (!out->isPortOpen()) {
+        delete out;
+        return nullptr;
+    }
+    out->setVolume(qMin(1.0f, effectiveGain()));
+    _midiOuts[port] = out;
+    return out;
+}
+
 bool MidiPlayer::setMidiOut(int portNumber)
 {
-    if (portNumber != -1 && portNumber >= midiDevices().size())
+    if (portNumber < -1 || (portNumber != -1 && portNumber >= midiDevices().size()))
         return false;
 
     if (!isPlayerStopped())
@@ -219,14 +248,10 @@ bool MidiPlayer::setMidiOut(int portNumber)
         _midiPortNum = -1;
         result = true;
     } else {
-        MidiOut *out = _midiOuts[portNumber];
-        if (!out) {
-            out = new MidiOut();
-            out->openPort(portNumber);
-            _midiOuts[portNumber] = out;
-        }
-        out->setVolume(qMin(1.0f, effectiveGain()));
-        result = out->isPortOpen();
+        MidiOut *out = openOut(portNumber);
+        result = out != nullptr && out->isPortOpen();
+        if (out)
+            out->setVolume(qMin(1.0f, effectiveGain()));
         _midiPortNum = result ? portNumber : _midiPortNum;
     }
 
@@ -351,6 +376,7 @@ void MidiPlayer::stop(bool resetPos)
     _midiSeq->stop(resetPos);
 
     sendAllNotesOff();
+    releaseSustain();       // all-notes-off keeps the notes held by a pedal that is still down
 }
 
 void MidiPlayer::setVolume(int v)
@@ -520,12 +546,24 @@ void MidiPlayer::setLockVolume(int ch, bool lock)
 
 void MidiPlayer::setPositionTick(int t)
 {
+    // seeking while playing: the notes sounding at the old position must stop (they never get their note-off)
+    const bool wasPlaying = isPlayerPlaying();
+    if (wasPlaying) {
+        _midiSeq->stop();
+        sendAllNotesOff();
+        releaseSustain();
+    }
     _midiSeq->setPositionTick(t);
+    if (wasPlaying)
+        _midiSeq->start();
 }
 
 void MidiPlayer::setTranspose(int t)
 {
-    if (_midiTranspose == -12 || _midiTranspose == 12)
+    // limit the NEW value (checking the current one locked the key for good once it reached +-12)
+    if (t < -12) t = -12;
+    if (t > 12)  t = 12;
+    if (t == _midiTranspose)
         return;
 
     _midiTranspose = t;
@@ -617,7 +655,9 @@ void MidiPlayer::setLockBass(bool lock, int number)
 
 void MidiPlayer::setMapChannelOutput(int ch, int port)
 {
-    if (port != -1 && port >= midiDevices().size())
+    if (ch < 0 || ch > 15)
+        return;
+    if (port < -1 || (port != -1 && port >= midiDevices().size()))
         return;
 
     if (port == _midiChannels[ch].port())
@@ -640,13 +680,9 @@ void MidiPlayer::setMapChannelOutput(int ch, int port)
     }
     else
     {
-        MidiOut *out = _midiOuts[port];
-        if (!out) {
-            out = new MidiOut();
-            out->openPort(port);
-            out->setVolume(qMin(1.0f, effectiveGain()));
-            _midiOuts[port] = out;
-        }
+        MidiOut *out = openOut(port);
+        if (!out)
+            return;             // port busy / gone: the channel stays where it was
 
         if (!this->isPlayerStopped()) {
             out->sendProgramChange(ch, _midiChannels[ch].instrument());
@@ -675,14 +711,47 @@ void MidiPlayer::receiveMidiIn(std::vector<unsigned char> *message)
         // the karaoke program's own mixer: its volume / pan / expression / reverb / chorus and "reset all controllers"
         // would overwrite what was set here
         switch ((*message)[1]) {
-        case 7: case 10: case 11: case 91: case 93: case 121:
+        case 7: case 10: case 11: case 91: case 93:
             return;
+        case 121: {
+            // "reset all controllers" would also reset this mixer's levels, so it is not passed on - but the pedals,
+            // modulation and pitch bend it resets must still be let go of, otherwise the next song's notes hang
+            // (sustain stuck down) or play out of tune / with vibrato
+            const unsigned char st = (*message)[0];
+            const unsigned char ch = st & 0x0F;
+            deliverMidiIn({ st, 64, 0 });
+            deliverMidiIn({ st, 66, 0 });
+            deliverMidiIn({ st, 1, 0 });
+            deliverMidiIn({ (unsigned char)(0xE0 | ch), 0, 64 });
+            return;
+        }
         default:
             break;
         }
     }
-    _midiInEvent.setMessage(message);
-    this->sendEvent(_midiInEvent);
+    deliverMidiIn(*message);
+}
+
+void MidiPlayer::deliverMidiIn(const std::vector<unsigned char> &msg)
+{
+    std::vector<unsigned char> m = msg;
+    MidiEvent ev;
+    ev.setMessage(&m);
+    this->sendEvent(ev);
+}
+
+void MidiPlayer::releaseSustain()
+{
+    for (int ch = 0; ch < 16; ch++) {
+        const int port = _midiChannels[ch].port();
+        if (port == -1) {
+            _midiSynth->sendController(ch, 64, 0);      // sustain pedal released
+            _midiSynth->sendController(ch, 66, 0);      // sostenuto
+        } else if (MidiOut *out = _midiOuts.value(port, nullptr)) {
+            out->sendController(ch, 64, 0);
+            out->sendController(ch, 66, 0);
+        }
+    }
 }
 
 void MidiPlayer::setUseMedley(bool use)
@@ -713,8 +782,11 @@ bool MidiPlayer::loadNextMedley(const QString &file, int cutStartBar, int cutEnd
         delete _midiSeqTemp;
 
     _midiSeqTemp = new MidiSequencer();
-    if (!_midiSeqTemp->load(file, true))
+    if (!_midiSeqTemp->load(file, true)) {
+        delete _midiSeqTemp;        // an empty sequencer would otherwise be switched in as "the next song"
+        _midiSeqTemp = nullptr;
         return false;
+    }
 
     _midiSeqTemp->midiFile()->setSingleTempo(true);
 
@@ -738,60 +810,33 @@ void MidiPlayer::unloadNextMedley()
 
 void MidiPlayer::sendEvent(MidiEvent e)
 {
-    _playingEventPtr = &e;
+    MidiEvent sent;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_sendMx);
+        _playingEventPtr = &e;
 
-    if (e.eventType() == MidiEventType::Controller
-        || e.eventType() == MidiEventType::ProgramChange) {
-        sendEventToDevices(e);
-    } else {
-        if (_midiChannels[e.channel()].isMute() == false) {
-            if (_useSolo) {
-                if (_midiChannels[e.channel()].isSolo()) {
+        // note-offs always pass: a note that started before the channel was muted / another one soloed must stop
+        if (e.eventType() == MidiEventType::Controller
+            || e.eventType() == MidiEventType::ProgramChange
+            || e.eventType() == MidiEventType::NoteOff) {
+            sendEventToDevices(e);
+        } else {
+            if (_midiChannels[e.channel()].isMute() == false) {
+                if (_useSolo) {
+                    if (_midiChannels[e.channel()].isSolo()) {
+                        sendEventToDevices(e);
+                    }
+                } else {
                     sendEventToDevices(e);
                 }
-            } else {
-                sendEventToDevices(e);
             }
         }
+
+        sent = *_playingEventPtr;
+        _playingEventPtr = nullptr;
     }
 
-    emit sendedEvent(*_playingEventPtr);
-}
-
-void MidiPlayer::onSeqFinished()
-{
-    if (_useMedley) {
-        if (_midiSeq->isSeqFinished() && (_midiSeqTemp != nullptr)) {
-            _midiSeq->deleteLater();
-            _midiSeq = _midiSeqTemp;
-            _midiSeqTemp = nullptr;
-
-            connect(_midiSeq, SIGNAL(playingEvent(MidiEvent)),
-                    this, SLOT(sendEvent(MidiEvent)), Qt::DirectConnection);
-            connect(_midiSeq, SIGNAL(bpmChanged(int)),
-                    this, SLOT(onSeqBpmChanged(int)), Qt::DirectConnection);
-            connect(_midiSeq, SIGNAL(finished()),
-                    this, SLOT(onSeqFinished()), Qt::DirectConnection);
-
-            _midiTranspose = _midiTransposeTemp;
-            _midiTransposeTemp = 0;
-
-            _midiSynth->compactSoundfont();
-            _midiSeq->start();
-
-            emit nextMedleyStarted();
-            emit nextMedleyAfterStarted();
-        } else if (_midiSeq->isSeqFinished() && (_midiSeqTemp == nullptr)) {
-            emit finished();
-        }
-    } else {
-        emit finished();
-    }
-}
-
-void MidiPlayer::onSeqBpmChanged(int bpm)
-{
-    emit bpmChanged(bpm);
+    emit sendedEvent(sent);
 }
 
 void MidiPlayer::sendEventToDevices(MidiEvent evt)
@@ -801,22 +846,45 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
 
     switch (e->eventType()) {
         case MidiEventType::NoteOff: {
-            int n = getNoteNumberToPlay(ch, e->data1());
-            if (_midiChannels[ch].port() == -1) {
-                _midiSynth->sendNoteOff(ch, n, e->data2());
+            const int key = e->data1() & 0x7F;
+            int n, port;
+            if (_playedNote[ch][key] >= 0) {
+                // the note number / port it was really played with (transpose, lock kick-snare ... may have changed)
+                n = _playedNote[ch][key];
+                port = _playedPort[ch][key];
+                _playedNote[ch][key] = -1;
             } else {
-                _midiOuts[_midiChannels[ch].port()]->sendNoteOff(ch, n, e->data2());
+                n = getNoteNumberToPlay(ch, key);
+                port = _midiChannels[ch].port();
+            }
+            if (port == -1) {
+                _midiSynth->sendNoteOff(ch, n, e->data2());
+            } else if (MidiOut *out = _midiOuts.value(port, nullptr)) {
+                out->sendNoteOff(ch, n, e->data2());
             }
             break;
         }
         case MidiEventType::NoteOn: {
             if (_midiChannels[ch].isChangingPort())
                 break;
-            int n = getNoteNumberToPlay(ch, e->data1());
-            if (_midiChannels[ch].port() == -1) {
+            const int key = e->data1() & 0x7F;
+            int n = getNoteNumberToPlay(ch, key);
+            const int port = _midiChannels[ch].port();
+            const int oldN = _playedNote[ch][key];
+            const int oldPort = _playedPort[ch][key];
+            if (oldN >= 0 && (oldN != n || oldPort != port)) {
+                // struck again before its note-off, but now as another note / on another port: stop the old one
+                if (oldPort == -1)
+                    _midiSynth->sendNoteOff(ch, oldN, 0);
+                else if (MidiOut *out = _midiOuts.value(oldPort, nullptr))
+                    out->sendNoteOff(ch, oldN, 0);
+            }
+            _playedNote[ch][key] = n;
+            _playedPort[ch][key] = port;
+            if (port == -1) {
                 _midiSynth->sendNoteOn(ch, n, e->data2());
-            } else {
-                _midiOuts[_midiChannels[ch].port()]->sendNoteOn(ch, n, e->data2());
+            } else if (MidiOut *out = _midiOuts.value(port, nullptr)) {
+                out->sendNoteOn(ch, n, e->data2());
             }
             break;
         }
@@ -825,7 +893,7 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
             if (_midiChannels[ch].port() == -1) {
                 _midiSynth->sendNoteAftertouch(ch, n, e->data2());
             } else {
-                _midiOuts[_midiChannels[ch].port()]->sendNoteAftertouch(ch, n, e->data2());
+                if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendNoteAftertouch(ch, n, e->data2());
             }
             break;
         }
@@ -851,7 +919,7 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
             if (_midiChannels[ch].port() == -1) {
                 _midiSynth->sendController(ch, e->data1(), e->data2());
             } else {
-                _midiOuts[_midiChannels[ch].port()]->sendController(ch, e->data1(), e->data2());
+                if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendController(ch, e->data1(), e->data2());
             }
             break;
         }
@@ -880,7 +948,7 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
             if (_midiChannels[ch].port() == -1) {
                 _midiSynth->sendProgramChange(ch, programe);
             } else {
-                _midiOuts[_midiChannels[ch].port()]->sendProgramChange(ch, programe);
+                if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendProgramChange(ch, programe);
             }
             break;
         }
@@ -888,7 +956,7 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
             if (_midiChannels[ch].port() == -1) {
                 _midiSynth->sendChannelAftertouch(ch, e->data1());
             } else {
-                _midiOuts[_midiChannels[ch].port()]->sendChannelAftertouch(ch, e->data1());
+                if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendChannelAftertouch(ch, e->data1());
             }
             break;
         }
@@ -896,7 +964,7 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
             if (_midiChannels[ch].port() == -1) {
                 _midiSynth->sendPitchBend(ch, e->data1());
             } else {
-                _midiOuts[_midiChannels[ch].port()]->sendPitchBend(ch, e->data1());
+                if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendPitchBend(ch, e->data1());
             }
             break;
         }
@@ -907,11 +975,17 @@ void MidiPlayer::sendEventToDevices(MidiEvent evt)
 
 void MidiPlayer::sendAllNotesOff(int ch)
 {
+    if (ch < 0 || ch > 15)
+        return;
+
+    std::lock_guard<std::recursive_mutex> lock(_sendMx);
     if (_midiChannels[ch].port() == -1) {
         _midiSynth->sendAllNotesOff(ch);
-    } else {
-        _midiOuts[_midiChannels[ch].port()]->sendAllNotesOff(ch);
+    } else if (MidiOut *out = _midiOuts.value(_midiChannels[ch].port(), nullptr)) {
+        out->sendAllNotesOff(ch);
     }
+    for (int n = 0; n < 128; n++)
+        _playedNote[ch][n] = -1;
 }
 
 void MidiPlayer::sendAllNotesOff()
@@ -923,10 +997,12 @@ void MidiPlayer::sendAllNotesOff()
 
 void MidiPlayer::sendAllSoundOff(int ch)
 {
+    if (ch < 0 || ch > 15)
+        return;
     if (_midiChannels[ch].port() == -1) {
         _midiSynth->sendController(ch, 120, 0);
     } else {
-        _midiOuts[_midiChannels[ch].port()]->sendController(ch, 120, 0);
+        if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendController(ch, 120, 0);
     }
 }
 
@@ -939,10 +1015,12 @@ void MidiPlayer::sendAllSoundOff()
 
 void MidiPlayer::sendResetAllControllers(int ch)
 {
+    if (ch < 0 || ch > 15)
+        return;
     if (_midiChannels[ch].port() == -1) {
             _midiSynth->sendResetAllControllers(ch);
     } else {
-        _midiOuts[_midiChannels[ch].port()]->sendResetAllControllers(ch);
+        if (MidiOut *o = _midiOuts.value(_midiChannels[ch].port(), nullptr)) o->sendResetAllControllers(ch);
     }
 }
 
@@ -998,8 +1076,11 @@ void MidiPlayer::calculateUsedPort()
         if (usedPort.indexOf(pNumber) != -1)
             continue;
 
-        _midiOuts[pNumber]->closePort();;
-        delete _midiOuts.take(pNumber);
+        MidiOut *o = _midiOuts.take(pNumber);   // (an entry can be null: operator[] used to insert one)
+        if (o) {
+            try { o->closePort(); } catch (...) {}
+            delete o;
+        }
     }
 }
 

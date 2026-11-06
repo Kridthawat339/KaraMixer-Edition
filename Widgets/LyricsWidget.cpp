@@ -173,7 +173,7 @@ void LyricsWidget::setPositionCursor(int tick)
 
     if (char_index == chars_width.count()) {
         animation->stop();
-        cursor_width = chars_width.last();
+        cursor_width = chars_width.isEmpty() ? 0 : chars_width.last();   // empty lyric line: last() on an empty list crashed
         at_end_line = true;
         cursor_index++;
         update();
@@ -200,7 +200,7 @@ void LyricsWidget::setPositionCursor(int tick)
         updateArea = calculateUpdateArea();
     }
 
-    if (char_index >= 0 && chars_width.count() != 0) {
+    if (char_index >= 0 && char_index < chars_width.count()) {   // (line re-measured shorter: at() out of range)
         cursor_toEnd = chars_width.at(char_index);
     }
 
@@ -267,7 +267,7 @@ void LyricsWidget::setSeekPositionCursor(int tick)
         }
 
         if (char_index == chars_width.count()) {
-            cursor_width = chars_width.last();
+            cursor_width = chars_width.isEmpty() ? 0 : chars_width.last();   // empty lyric line: last() on an empty list crashed
             at_end_line = true;
             cursor_index++;
 
@@ -300,7 +300,7 @@ void LyricsWidget::setSeekPositionCursor(int tick)
             chars_width = getCharsWidth();
         }
 
-        if (char_index >= 0 && chars_width.count() != 0) {
+        if (char_index >= 0 && char_index < chars_width.count()) {   // (line re-measured shorter: at() out of range)
             cursor_toEnd = chars_width.at(char_index);
         }
 

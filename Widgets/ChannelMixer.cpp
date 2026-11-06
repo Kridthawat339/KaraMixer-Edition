@@ -168,12 +168,14 @@ void ChannelMixer::setPlayer(MidiPlayer *p)
 
 void ChannelMixer::peak(int ch, int value)
 {
+    if (ch < 0 || ch >= chs.size())
+        return;
     chs[ch]->peak(value);
 }
 
 bool ChannelMixer::isMuteVoice()
 {
-    return player->midiChannel()[8].isMute();
+    return player && player->midiChannel()[8].isMute();
 }
 
 void ChannelMixer::setMuteVoice(bool mute)
@@ -188,6 +190,8 @@ void ChannelMixer::setMuteVoice(bool mute)
 
 void ChannelMixer::showDeTail(int ch)
 {
+    if (!player || ch < 0 || ch > 15)       // before setPlayer() / combo box emptied: nothing to show
+        return;
     disconnect(ui->cbInts, SIGNAL(activated(int)), this, SLOT(onCbIntsActivated(int)));
     disconnect(ui->dialPan, SIGNAL(valueChanged(int)), this, SLOT(onDialPanValueChanged(int)));
     disconnect(ui->dialReverb, SIGNAL(valueChanged(int)), this, SLOT(onDialReverbValueChanged(int)));
@@ -234,10 +238,10 @@ void ChannelMixer::onPlayerPlayingEvent(MidiEvent e)
 {
     switch (e.eventType()) {
     case MidiEventType::NoteOn:
-        chs[e.channel()]->peak(e.data2());
+        peak(e.channel(), e.data2());
         break;
     case MidiEventType::Controller:
-        if (e.data1() == 7) {
+        if (e.data1() == 7 && e.channel() >= 0 && e.channel() < chs.size()) {
             chs[e.channel()]->setSliderValue(e.data2());
         }
         if (e.channel() == ui->cbCh->currentIndex()) {
@@ -304,6 +308,10 @@ void ChannelMixer::onChMouseRightClicked(int ch, const QPoint &p)
     bool tempLock = lock;
     lock = true;
 
+    if (!player || ch < 0 || ch > 15) {
+        lock = tempLock;
+        return;
+    }
     QAction act(tr("ล็อคระดับเสียง"), this);
     act.setCheckable(true);
     act.setChecked(player->midiChannel()[ch].isLockVol());
@@ -332,8 +340,11 @@ void ChannelMixer::onDialPanValueChanged(int value)
     if (player == nullptr)
         return;
 
-    player->setPan(ui->cbCh->currentIndex(), 127-value);
-    setPanToolTip(player->midiChannel()[ui->cbCh->currentIndex()].pan());
+    const int ch = ui->cbCh->currentIndex();
+    if (ch < 0 || ch > 15)
+        return;
+    player->setPan(ch, 127-value);
+    setPanToolTip(player->midiChannel()[ch].pan());
     QToolTip::showText(QCursor::pos(), ui->dialPan->toolTip());
 }
 

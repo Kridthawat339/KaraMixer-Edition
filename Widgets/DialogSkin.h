@@ -36,6 +36,7 @@ protected:
         case QEvent::WindowTitleChange:
         case QEvent::MouseMove:
         case QEvent::MouseButtonPress:
+        case QEvent::Enter:
             break;
         default:
             return false;
@@ -43,6 +44,20 @@ protected:
 
         if (!o->isWidgetType())
             return false;
+
+        if (e->type() == QEvent::Enter || e->type() == QEvent::MouseMove) {
+            // the edge-resize cursor is set on the dialog, so the controls inside inherit it: once the mouse is over a
+            // control (not on the dialog's own edge) it must be the normal arrow again
+            QWidget *w = static_cast<QWidget *>(o);
+            QWidget *win = w->window();
+            if (w != win && win && win->testAttribute(Qt::WA_SetCursor)) {
+                const Qt::CursorShape cs = win->cursor().shape();
+                if (cs == Qt::SizeHorCursor || cs == Qt::SizeVerCursor || cs == Qt::SizeFDiagCursor || cs == Qt::SizeBDiagCursor)
+                    win->setCursor(Qt::ArrowCursor);
+            }
+            if (e->type() == QEvent::Enter)
+                return false;
+        }
 
         if (e->type() == QEvent::Polish) {
             if (QMenu *m = qobject_cast<QMenu *>(o)) {
@@ -174,16 +189,16 @@ private:
 
         busy.insert(dlg);
 
-        // Yes / No / OK / Cancel buttons of the message and input boxes: a little bigger, easier to hit
-        // (size only - the texts are untouched). Other dialogs get a slightly bigger OK / Cancel row too.
+        // Yes / No / OK / Cancel buttons of the message and input boxes: a touch bigger than default, easy to hit
+        // but in proportion to the text (size only - the texts are untouched).
         const bool box = qobject_cast<QMessageBox *>(dlg) || qobject_cast<QInputDialog *>(dlg);
         for (QDialogButtonBox *bb : dlg->findChildren<QDialogButtonBox *>()) {
             for (QAbstractButton *b : bb->buttons()) {
                 QFont bf = b->font();
-                bf.setPointSizeF(bf.pointSizeF() > 0 ? bf.pointSizeF() + (box ? 1.5 : 1.0) : 10.0);
-                bf.setBold(true);
+                if (bf.pointSizeF() > 0)
+                    bf.setPointSizeF(bf.pointSizeF() + 0.5);
                 b->setFont(bf);
-                b->setMinimumSize(box ? 104 : 92, box ? 44 : 38);
+                b->setMinimumSize(box ? 78 : 72, box ? 30 : 28);
             }
         }
 

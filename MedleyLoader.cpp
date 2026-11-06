@@ -30,7 +30,8 @@ void MedleyLoader::run()
     if (_song->songType() == "NCN")
     {
         QString midPath = _songDb->ncnPath() + _song->path();
-        _player->loadNextMedley(midPath, _song->cutStartBar(), _song->cutEndBar(), _song->bpmSpeed(), _song->transpose());
+        if (!_player->loadNextMedley(midPath, _song->cutStartBar(), _song->cutEndBar(), _song->bpmSpeed(), _song->transpose()) || !_player->midiFileTemp())
+            return;     // medley off / file unreadable: there is no next song (midiFileTemp() would be null)
 
         QString curPath = _songDb->getCurFilePath(midPath);
         if (curPath == "" || !QFile::exists(curPath)) {
@@ -57,9 +58,11 @@ void MedleyLoader::run()
         mid.write(HNKFile::midData(hnkPath));
         mid.close();
 
-        _player->loadNextMedley(TEMP_MIDI_DIR_PATH, _song->cutStartBar(), _song->cutEndBar(), _song->bpmSpeed(), _song->transpose());
+        const bool loaded = _player->loadNextMedley(TEMP_MIDI_DIR_PATH, _song->cutStartBar(), _song->cutEndBar(), _song->bpmSpeed(), _song->transpose());
 
         mid.remove();
+        if (!loaded || !_player->midiFileTemp())
+            return;
 
         _lyrWidget->setLyricsTemp(Utils::readLyrics(HNKFile::lyrData(hnkPath)),
             Utils::readCurFile(HNKFile::curData(hnkPath), _player->midiFileTemp()->resorution()));
@@ -68,7 +71,9 @@ void MedleyLoader::run()
     {
         QString karPath = _songDb->karPath() + _song->path();
 
-        _player->loadNextMedley(karPath, _song->cutStartBar(), _song->cutEndBar(), _song->bpmSpeed(), _song->transpose());
+        if (!_player->loadNextMedley(karPath, _song->cutStartBar(), _song->cutEndBar(), _song->bpmSpeed(), _song->transpose())
+                || !_player->midiFileTemp())
+            return;
 
         _lyrWidget->setLyricsTemp(_player->midiFileTemp()->lyrics(), _player->midiFileTemp()->lyricsCursor());
     }  else {

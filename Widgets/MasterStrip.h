@@ -247,6 +247,8 @@ public:
 
     void removeFxLabel(int fxIndex)
     {
+        if (fxIndex < 0 || fxIndex >= fxList->count())
+            return;
         QListWidgetItem *item = fxList->takeItem(fxIndex);
         if (!item) return;
         delete fxList->itemWidget(item);

@@ -173,8 +173,13 @@ void LEDVu::resizeEvent(QResizeEvent *event)
 
 void LEDVu::paintEvent(QPaintEvent *event)
 {
+    // painted before the first resize (no LED table yet) or with an empty range: nothing to draw - at() on the table
+    // with an index outside it (or the division by zero) crashed
+    if (_pixSize.isEmpty() || _absVl == 0)
+        return;
+    const int lastIdx = _pixSize.size() - 1;
     int ledVl = _ledCount * _vl / _absVl;
-    ledVl = _ledCount - ledVl;
+    ledVl = qBound(0, _ledCount - ledVl, lastIdx);
 
     QPainter p(this);
 
@@ -186,7 +191,7 @@ void LEDVu::paintEvent(QPaintEvent *event)
 
     if (_showPeakHold && _peakLevel > 0) {
         int pl = _ledCount * _peakLevel / _absVl;
-        pl = _ledCount - pl;
+        pl = qBound(0, _ledCount - pl, lastIdx);
 
         QRect r(QPoint(1, _pixSize.at(pl)+1), _ledSize);
         if (pl > (_ledCount2 + _ledCount3))

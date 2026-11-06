@@ -21,6 +21,7 @@
 #include "Utils.h"
 #include "Midi/MidiHelper.h"
 #include "Midi/AsioOutput.h"
+#include "Midi/DevicePicker.h"
 #include <QGroupBox>
 #include <QComboBox>
 #include <QCheckBox>
@@ -550,7 +551,7 @@ void SettingsDialog::initDeviceTab()
                         if (synth->asioDevice() < 0)
                             QMessageBox::warning(this, tr("ASIO"), tr("Could not start this ASIO driver. The normal output device is used instead.")
                                                  + QStringLiteral("\n") + synth->asioError());
-                        settings->setValue("AsioDevice", synth->asioDevice());
+                        DevicePicker::saveAsioDevice(settings, synth->asioDevice(), AsioOutput::devices());
                         // rebuild the panel after this click has finished
                         QTimer::singleShot(0, dev, [refresh]() { refresh(); });
                     });
@@ -662,7 +663,7 @@ void SettingsDialog::initDeviceTab()
                     ok = synth->setAsioDevice(idx);
                     if (!ok) why = synth->asioError();
                 }
-                settings->setValue("AsioDevice", synth->asioDevice());
+                DevicePicker::saveAsioDevice(settings, synth->asioDevice(), AsioOutput::devices());
                 if (ok) {
                     settings->setValue("AsioLastDevice", synth->asioDevice());
                 } else {
@@ -694,7 +695,7 @@ void SettingsDialog::initDeviceTab()
                 if (synth->asioDevice() < 0)
                     QMessageBox::warning(this, tr("ASIO"), tr("Could not start this ASIO driver. The normal output device is used instead.")
                                          + QStringLiteral("\n") + synth->asioError());
-                settings->setValue("AsioDevice", synth->asioDevice());
+                DevicePicker::saveAsioDevice(settings, synth->asioDevice(), AsioOutput::devices());
             }
             QTimer::singleShot(0, dev, [refresh]() { refresh(); });
         });
@@ -732,7 +733,7 @@ void SettingsDialog::initDeviceTab()
                 if (synth->asioDevice() < 0)
                     QMessageBox::warning(this, tr("ASIO"), tr("Could not start this ASIO driver. The normal output device is used instead.")
                                          + QStringLiteral("\n") + synth->asioError());
-                settings->setValue("AsioDevice", synth->asioDevice());
+                DevicePicker::saveAsioDevice(settings, synth->asioDevice(), AsioOutput::devices());
             } else {
                 ui->sliderBuffer->setValue(v);          // the existing latency code (re-open of the synth)
             }
@@ -1104,6 +1105,8 @@ void SettingsDialog::on_cbMidiIn_activated(int index)
     int cur = ui->cbMidiIn->currentIndex();
     settings->setValue("MidiIn", cur-1);
     settings->setValue("MidiInName", cur > 0 ? ui->cbMidiIn->itemText(cur) : QString());
+    if (cur > 0)    // what this computer uses (a config from another computer then falls back to it)
+        DevicePicker::setLocalValue("MidiInName", ui->cbMidiIn->itemText(cur));
 }
 
 void SettingsDialog::on_cbAudioOut_activated(int index)
@@ -1136,7 +1139,7 @@ void SettingsDialog::on_cbAudioOut_activated(int index)
             if (sel < 0 || sel >= normalCount) sel = 0;
             ui->cbAudioOut->setCurrentIndex(sel);
         }
-        settings->setValue("AsioDevice", synth->asioDevice());
+        DevicePicker::saveAsioDevice(settings, synth->asioDevice(), AsioOutput::devices());
         return;
     }
 
@@ -1146,9 +1149,9 @@ void SettingsDialog::on_cbAudioOut_activated(int index)
     // Stop playback first so changing the output device mid-play can't garble the sound.
     mainWin->stop();
     synth->setAsioDevice(-1);
-    settings->setValue("AsioDevice", -1);
+    DevicePicker::saveAsioDevice(settings, -1, AsioOutput::devices());
     synth->setDefaultDevice(index+1);
-    settings->setValue("SynthDefaultDevice", index+1);
+    DevicePicker::saveAudioDevice(settings, index+1, MidiSynthesizer::audioDevices());
     /*if (BASS_SetDevice(index) == BASS_OK) {
         settings->setValue("defaultAudioDevice", index);
     } else {
@@ -1164,7 +1167,7 @@ void SettingsDialog::onChbLockDrumToggled(bool checked)
 {
     if (checked) {
         ui->cbLockDrum->setEnabled(true);
-        mainWin->midiPlayer()->setLockDrum(true, ui->cbLockDrum->currentIndex());
+        mainWin->midiPlayer()->setLockDrum(true, qMax(0, ui->cbLockDrum->currentIndex()));   // -1 = nothing chosen yet
     }
     else {
         ui->cbLockDrum->setEnabled(false);

@@ -8,6 +8,7 @@ DWORD ChorusFX::getBassWaveform(WaveformType wt)
     case WaveformType::Sine:
         return 1;
     }
+    return 1;
 }
 
 DWORD ChorusFX::getBassPhase(PhaseType pt)
@@ -24,6 +25,7 @@ DWORD ChorusFX::getBassPhase(PhaseType pt)
     case PhaseType::Phase180:
         return BASS_DX8_PHASE_180;
     }
+    return BASS_DX8_PHASE_90;
 }
 
 ChorusFX::ChorusFX(DWORD stream, int priority) :FX(priority)

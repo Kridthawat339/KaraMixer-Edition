@@ -77,6 +77,7 @@ private:
     bool    _finished = false;
     bool    _stopped = true;
     bool    _playing = false;
+    bool    _chase = false;     // after a seek: send the program / controller / pitch events before the new position first
 
     int _startTick = 0;
     int _endTick = 0;

@@ -486,6 +486,10 @@ public:
     std::vector<AudioBusBuffers> inBuses, outBuses;
 
     std::mutex lock;                    // protects pending queues
+    // held by process() for each block (audio thread) and by loadState() / saveState() (GUI thread): a plug-in's
+    // processor must not have its state replaced (IComponent::setState) or read while it is processing audio -
+    // that was a race that could crash or corrupt some plug-ins when a preset / saved chunk was loaded during playback
+    std::mutex procMx;
     std::vector<Event> pendingEvents;
     std::vector<std::pair<ParamID, ParamValue>> pendingParams;
     std::set<int> activeNotes;          // (ch << 8) | note
@@ -902,6 +906,19 @@ void Plugin::process(const float *in, float *out, int frames, int hostChans)
         return;
     }
 
+    // the state is being loaded / saved right now (GUI thread): never block the audio thread, and never call the
+    // processor at the same time - this one block passes the input through (effect) or is silent (instrument)
+    std::unique_lock<std::mutex> procLock(m->procMx, std::try_to_lock);
+    if (!procLock.owns_lock()) {
+        if (hasIn) {
+            if (out != in)
+                std::memcpy(out, in, sizeof(float) * (size_t)frames * (size_t)hostChans);
+        } else {
+            std::memset(out, 0, sizeof(float) * (size_t)frames * (size_t)hostChans);
+        }
+        return;
+    }
+
     int done = 0;
     while (done < frames) {
         const int maxBlock = Impl::kMaxBlock;
@@ -1152,6 +1169,7 @@ static uint32_t getU32(const char *p)
 
 std::vector<char> Plugin::saveState()
 {
+    std::lock_guard<std::mutex> procLock(d->procMx);   // not while process() runs (see Impl::procMx)
     MemStream comp, ctrl;
     if (d->component) d->component->getState(&comp);
     if (d->controller) d->controller->getState(&ctrl);
@@ -1177,6 +1195,12 @@ bool Plugin::loadState(const char *data, size_t size)
     const char *c2 = c1 + n1 + 4;
 
     bool ok = true;
+    // process() is kept out for the whole load (see Impl::procMx), and the processor is told it is not processing:
+    // the VST3 rule for replacing a running plug-in's state
+    std::lock_guard<std::mutex> procLock(d->procMx);
+    const bool wasProcessing = d->processor && d->active;
+    if (wasProcessing)
+        d->processor->setProcessing(false);
     if (d->component && n1 > 0) {
         MemStream s(c1, n1);
         ok = d->component->setState(&s) == kResultOk;
@@ -1189,6 +1213,8 @@ bool Plugin::loadState(const char *data, size_t size)
         MemStream s(c2, n2);
         d->controller->setState(&s);
     }
+    if (wasProcessing)
+        d->processor->setProcessing(true);
     return ok;
 }
 

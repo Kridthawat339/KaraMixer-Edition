@@ -39,15 +39,19 @@ MapSoundfontDialog::~MapSoundfontDialog()
 
 void MapSoundfontDialog::showSoundfontPreset(int preset)
 {
+    if (preset < 0 || preset >= SF_PRESET_COUNT)
+        return;
+    const QList<int> instMap = synth->getMapSoundfontIndex(preset);
+    const QList<int> drumMap = synth->getDrumMapSfIndex(preset);
     QStringList instNames = MidiHelper::GMInstrumentNumberNames();
     for (int i=0; i<instNames.count(); i++)
     {
-        int sfIndex = synth->getMapSoundfontIndex(preset)[i];
+        int sfIndex = instMap.value(i, 0);
 
         QTableWidgetItem *item1 = new QTableWidgetItem(instNames[i]);
         QTableWidgetItem *item2 = new QTableWidgetItem();
 
-        if (sfIndex < sfNames.count())
+        if (sfIndex >= 0 && sfIndex < sfNames.count())
             item2->setText(sfNames[sfIndex]);
 
         if (ui->tableInst->rowCount() <= i) {
@@ -61,10 +65,10 @@ void MapSoundfontDialog::showSoundfontPreset(int preset)
     // drum
     for (int i=0; i<16; i++)
     {
-        int sfIndex = synth->getDrumMapSfIndex(preset)[i];
+        int sfIndex = drumMap.value(i, 0);
         QTableWidgetItem *item = new QTableWidgetItem();
 
-        if (sfIndex < sfNames.count())
+        if (sfIndex >= 0 && sfIndex < sfNames.count())
             item->setText(sfNames[sfIndex]);
 
         ui->tableDrum->setItem(i, 1, item);
@@ -104,6 +108,8 @@ void MapSoundfontDialog::showDrumSoundfontsMenu(const QPoint &pos)
 void MapSoundfontDialog::setMapSoundfontsIndex(int sfIndex)
 {
     int presetsIndex = ui->cbPresets->currentIndex();
+    if (presetsIndex < 0 || presetsIndex >= SF_PRESET_COUNT || sfIndex < 0 || sfIndex >= sfNames.count())
+        return;
     QList<int> instMap = synth->getMapSoundfontIndex(presetsIndex);
     QList<int> drumMap = synth->getDrumMapSfIndex(presetsIndex);
 
@@ -118,13 +124,19 @@ void MapSoundfontDialog::setMapSoundfontsIndex(int sfIndex)
         int row = selection.at(i).row();
         if (selectedInstTable)
         {
+            if (row < 0 || row >= instMap.count())
+                continue;
             instMap[row] = sfIndex;
-            ui->tableInst->item(row, 1)->setText(sfNames[sfIndex]);
+            if (QTableWidgetItem *it = ui->tableInst->item(row, 1))
+                it->setText(sfNames[sfIndex]);
         }
         else
         {
+            if (row < 0 || row >= drumMap.count())
+                continue;
             drumMap[row] = sfIndex;
-            ui->tableDrum->item(row, 1)->setText(sfNames[sfIndex]);
+            if (QTableWidgetItem *it = ui->tableDrum->item(row, 1))
+                it->setText(sfNames[sfIndex]);
         }
     }
 

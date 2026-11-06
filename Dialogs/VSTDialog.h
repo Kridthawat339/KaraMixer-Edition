@@ -31,7 +31,9 @@ private:
     void detachEditor();
     void embedNow();
     void verifyEmbed(int attempt);
+    void fitToEditor();          // window size = the plug-in's own pixel size (it draws in real pixels, unscaled)
     bool attached = false;
+    bool screenHooked = false;
     int edW = 0, edH = 0;
     DWORD fxHandle;
     bool canOpen = false;

@@ -16,7 +16,7 @@ class Channel
     bool cSolo;
     bool cLockVolume;
     bool cChangingPort = false;
-    InstrumentType cInstType;
+    InstrumentType cInstType = InstrumentType::Piano;   // (was left uninitialised by the constructors)
 
 public:
     Channel();

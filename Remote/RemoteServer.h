@@ -3,7 +3,13 @@
 
 // Small HTTP server that mirrors the program window to a phone browser and
 // injects touch input back as mouse events (open by scanning a QR code).
+// It also serves the phone MIXER page (/m): faders, mute and solo of every strip and the master, working through the
+// mixer window's own controls (see setMixerApi) - nothing is opened on the computer's screen, so it works with the
+// mixer window behind the karaoke program or hidden.
+// The port and the access code are kept between runs, and the server can start with the program (autoStartEnabled), so
+// the link in the phone keeps working without anyone touching the computer on the stage.
 
+#include <functional>
 #include <QObject>
 #include <QPointer>
 #include <QTcpServer>
@@ -26,11 +32,24 @@ public:
     RemoteServer(QWidget *baseWindow, QWidget *ignoreWindow, QObject *parent = nullptr);
     ~RemoteServer();
 
-    bool start(const QString &ip);      // tries port 8765.. (10 ports)
+    bool start(const QString &ip);      // the saved port first, then 8765.. (10 ports); the saved access code
     void stop();
     bool isRunning() const { return server.isListening(); }
 
-    QString url() const;                // http://ip:port/?t=token
+    // start with the program (settings in KaraMixer.conf)
+    static bool autoStartEnabled();
+    static void setAutoStartEnabled(bool on);
+    static QString savedIp();           // the IP the link was made with last time (empty: none)
+    bool startAuto();                   // start with the saved IP (or the first one found); false: no network yet
+    void newToken();                    // a new access code: the old link / QR stops working at once
+
+    // The phone mixer page: `state` gives the mixer as JSON (asked a few times a second), `change` applies one change
+    // (k, i, v ...), `meters` gives only the meter levels as "n,n,n,..." (asked ~30 times a second, so it must be tiny and
+    // fast). All three are called in the GUI thread. Set by the main window.
+    void setMixerApi(std::function<QByteArray()> state, std::function<void(const QMap<QString, QString> &)> change,
+                     std::function<QByteArray()> meters);
+
+    QString url() const;                // http://ip:port/m?t=token (the phone mixer page)
     quint16 port() const { return server.serverPort(); }
     int     clientCount() const;        // phones seen in the last few seconds
 
@@ -49,6 +68,9 @@ private:
                 const QByteArray &query, const QByteArray &body);
     void reply(QTcpSocket *s, int code, const QByteArray &contentType,
                const QByteArray &body, const QByteArray &extraHeaders = QByteArray());
+
+    static QString makeToken();
+    static bool validToken(const QString &t);
 
     QWidget *targetWindow() const;
     bool grabFrame();                   // updates lastJpeg / lastHash
@@ -71,6 +93,11 @@ private:
     QMap<QString, qint64> clients;      // ip -> msecs (QElapsedTimer based)
     QElapsedTimer         clock;
     QTimer                idleTimer;
+    int                   lastClientCount = 0;      // what clientsChanged() last told
+
+    std::function<QByteArray()> mixState;
+    std::function<void(const QMap<QString, QString> &)> mixChange;
+    std::function<QByteArray()> mixMeters;
 };
 
 #endif // REMOTESERVER_H

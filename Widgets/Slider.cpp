@@ -214,7 +214,7 @@ void Slider::paintEvent(QPaintEvent *event)
 
     p.setPen(QPen(palette().color(QPalette::Mid), 1));
 
-    qreal distance = (height() - 1) / (sTickCount - 1);
+    qreal distance = sTickCount > 1 ? (height() - 1) / (sTickCount - 1) : 0.0;   // 0 / 1 tick: no NaN positions
 
     qreal xL1 = 2.0;
     qreal xL2 = (width() / 2.0) - 5.0;

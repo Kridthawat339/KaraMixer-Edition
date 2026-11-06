@@ -5,6 +5,7 @@
 #include <QMap>
 #include <QVector>
 #include <QTimer>
+#include <QMutex>
 
 #include <bass.h>
 #include <bassmidi.h>
@@ -162,6 +163,8 @@ public:
     void setTrim(InstrumentType t, double db);     // fine gain per strip, -12..+12 dB in 0.1 dB steps
     void setMute(InstrumentType t, bool m);
     void setSolo(InstrumentType t, bool s);
+    void setDrumSolo(bool on);                       // "Solo drums" button: only the drum / percussion strips are heard
+    bool isDrumSolo() const { return drumSolo; }
     void setUseVSTi(InstrumentType t, int vstiIndex);
     void setSpeaker(InstrumentType t, SpeakerType speaker);
 
@@ -255,6 +258,7 @@ private:
     void sendToAllMidiStream(int ch, DWORD eventType, DWORD param);
     void setSfToStream();
     void calculateEnable();
+    void applySolo();       // which strips are open (calculateEnable) and every strip's volume to match
     HSTREAM getDrumHandleFromNote(int drumNote);
 
 private:
@@ -288,6 +292,8 @@ private:
     static bool isCanthaiBank(int bank) { return bank == 101 || bank == 108 || bank == 110; }
     // every MIDI stream that carries notes (melodic, drums, Canthai - not the VSTi / bus streams)
     bool isMidiStrip(int i) const { return i < HANDLE_MIDI_COUNT - 4 || i == HANDLE_CANTHAI; }
+    // the drum / percussion strips (bass drum ... percussion etc.): the DRUM page of the mixer
+    bool isDrumStrip(int i) const { return i >= static_cast<int>(InstrumentType::BassDrum) && i < HANDLE_MIDI_COUNT - 4; }
 
     #ifndef __linux__
     QString mVstiFiles[4];
@@ -312,10 +318,26 @@ private:
     int  snareNote = 0;
     int  remapDrumNote(int note) const;
     void applyDrumTune(int note, HSTREAM stream);
+    // Where every sounding note was sent (stream / VSTi / external port), so its note-off goes to the same place even
+    // when the channel's program, VSTi, external port or the kick/snare choice changed in between (else it hangs)
+    struct NoteTarget
+    {
+        quint8 kind = 0;          // 0 = none, 1 = BASSMIDI stream, 2 = VSTi, 3 = external MIDI out
+        quint8 note = 0;          // note number really sent (after the drum remap)
+        DWORD handle = 0;
+        MidiOut *ext = nullptr;
+    };
+    NoteTarget noteTarget[16][128];
+    QMutex noteMx;
+    void releaseTarget(int ch, const NoteTarget &nt, int velocity);
+    qint64 sustainSince[16] = { 0 };   // when the sustain pedal of a channel went down (ms, 0 = up): a pedal that never comes up is released
+    static qint64 nowMs();
+    int  rpnSel[16][2];  // RPN selected per channel (MSB, LSB; 127/127 = none): used to keep absurd coarse-tune values out
     int  dpMode = -1;   // -1 none, 1 NRPN, 2 RPN (last parameter selected on ch 10)
     int  dpMsb = 127;
     int  dpLsb = 127;
     bool useSolo = false;
+    bool drumSolo = false;      // "Solo drums": counts as a solo on every drum / percussion strip (not saved)
 
     int defaultDev = 1;
     int asioDev = -1;

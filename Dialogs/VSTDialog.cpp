@@ -9,6 +9,9 @@
 #include <QFile>
 #include <QDateTime>
 #include <QTextStream>
+#include <QWindow>
+#include <QScreen>
+#include <QtMath>
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -43,14 +46,35 @@ VSTDialog::VSTDialog(QWidget *parent, DWORD fxHandle, const QString &instName) :
         setWindowTitle(name + "  [" + instName + "]");
         edW = info.editorWidth;
         edH = info.editorHeight;
-        setFixedSize(edW, edH);
+        fitToEditor();
 
         canOpen = true;
     }
 }
 
+void VSTDialog::fitToEditor()
+{
+    if (edW <= 0 || edH <= 0)
+        return;
+    // A screen above 125 % scales the program (ScreenScale.h): Qt sizes are then larger than real pixels by the screen's
+    // factor, but the plug-in still paints its editor in real pixels - a window of edW x edH would leave an empty band
+    // on the right / bottom. Not scaled (factor 1): exactly edW x edH as before.
+    QWidget *ref = isVisible() ? static_cast<QWidget *>(this) : parentWidget();
+    const qreal dpr = ref ? ref->devicePixelRatioF() : 1.0;
+    if (dpr > 1.001)
+        setFixedSize(qCeil(edW / dpr), qCeil(edH / dpr));
+    else
+        setFixedSize(edW, edH);
+}
+
 void VSTDialog::showEvent(QShowEvent *event)
 {
+    if (!screenHooked && windowHandle()) {
+        screenHooked = true;
+        fitToEditor();
+        // dragged to a screen with another scale: keep the window the size of the editor
+        connect(windowHandle(), &QWindow::screenChanged, this, [this](QScreen *) { fitToEditor(); });
+    }
     if (!attached) {
         bv::EmbedEditor(fxHandle, NULL);   // make sure no stale embed remains
         embedNow();

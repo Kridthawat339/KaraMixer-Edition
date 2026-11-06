@@ -1,11 +1,13 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <functional>
 #include <QMainWindow>
 #include <QTimer>
 #include <QKeyEvent>
 #include <QLocale>
 #include <QSettings>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QDialog>
 #include <QTranslator>
@@ -70,6 +72,12 @@ public:
     void saveConfigFile();
     void openConfigFile();
     void applyConfigLive();   // apply the saved config files to the running program (no restart)
+    void resolveMidiIn(bool afterImport);   // open this computer's MIDI-in for the name in the config
+    int resolveAudioDevice(QSettings *st);  // sound card / ASIO number for this computer (by the stored name)
+    int resolveAsioDevice(QSettings *st);
+    // Phone control that starts with the program (menu tick / phone-control window): called by main() once the mixer is
+    // up. When the computer has no network yet (Wi-Fi still connecting) it tries again every few seconds.
+    void startRemoteAtLaunch();
 
 public slots:
     void play(int index, int position = 0);
@@ -91,7 +99,7 @@ protected:
     void keyReleaseEvent(QKeyEvent *event);
 
 private:
-    void loadNextMedley(Song *song);
+    void loadNextMedley(Song *song, std::function<void()> onLoaded = nullptr);
     void addToPlaylist(Song *song);
     void removeFromPlaylist(int index);
     void swapInPlaylist(int index, int toIndex);
@@ -164,6 +172,10 @@ private slots:
 private:
     Ui::MainWindow *ui;
     QSettings *settings;
+    QElapsedTimer midiInStart;      // time since start: a virtual cable is guessed only after a few seconds
+    QString midiInLogState;         // last MIDI-in state written to events.log ("open:..", "missing:..")
+    QString midiInImportNote;       // MIDI-in result shown in the "config loaded" message
+    QString midiInLocal;            // device this computer last opened
     bool skipSaveOnExit = false;
     SongDatabase *db;
     QTimer *timer1, *timer2, *positionTimer, *lyricsTimer;
@@ -181,6 +193,8 @@ private:
     MedleyLoader *medleyLoader = nullptr;
     RemoteServer *remoteServer = nullptr;
     QPointer<QDialog> remoteDialog;
+    QTimer *remoteRetry = nullptr;
+    RemoteServer *ensureRemote();   // the phone-control server, made on first use and wired to the mixer
 
     Background *bgWidget = nullptr;
     LyricsWidget *lyrWidget, *secondLyr = nullptr;

@@ -387,6 +387,9 @@ void InstCh::addFXLabel(const QString &label, int fxIndex, bool bypass)
 
 void InstCh::removeVSTLabel(int fxIndex)
 {
+    // only FX rows: an index past them would take the "BusN" row (busItem left dangling -> crash later)
+    if (fxIndex < 0 || fxIndex >= fxCount())
+        return;
     QListWidgetItem *item = ui->fxList->takeItem(fxIndex);
     QWidget *widget = ui->fxList->itemWidget(item);
     delete widget;

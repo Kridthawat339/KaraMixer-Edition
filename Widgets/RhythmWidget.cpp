@@ -53,7 +53,7 @@ void RhythmWidget::setBeat(const QList<SignatureBeat> &signatureBeats, int beatC
 
     { // Count bar
         _barCount = 0;
-        int lastBeat = 0, lastBeatInBar = 0, tempBeatCount = 0;
+        int lastBeat = 0, lastBeatInBar = 4, tempBeatCount = 0;   // no time signature = 4/4 (0 divided by zero: crash)
         for (SignatureBeat sigBeat : signatureBeats) {
             lastBeat = sigBeat.nBeat;
             if (lastBeat > 0) {
@@ -98,7 +98,9 @@ void RhythmWidget::setCurrentBeat(int b)
         ui->lbBeat->setText(QString::number(_currentBar+1)  + ":" + QString::number(_barCount+1));
     }
 
-    int beatIndex = (_currentBeat - lastBeat) % _currentBeatInBar;
+    // 6 beat lights: a bar of 7 or more beats (7/4 ...) used to light one that does not exist
+    int beatIndex = _currentBeatInBar > 0 ? (_currentBeat - lastBeat) % _currentBeatInBar : 0;
+    beatIndex = qBound(0, beatIndex, beats.size() - 1);
     beats[_tempIndex]->off();
     beats[beatIndex]->on();
     _tempIndex = beatIndex;

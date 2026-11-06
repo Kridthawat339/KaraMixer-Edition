@@ -30,8 +30,10 @@ public:
     void sendResetAllControllers();
 
 private:
+    void send3(int status, int d1, int d2);
+    void send2(int status, int d1);
+    void sendSafe(std::vector<unsigned char> &m);
     float oVolume;
-    std::vector<unsigned char> message;
 };
 
 #endif // MIDIOUT_H

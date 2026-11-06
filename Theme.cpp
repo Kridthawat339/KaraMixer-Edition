@@ -15,6 +15,7 @@
 #include <QTimer>
 
 #include "Config.h"
+#include "Widgets/KmStyle.h"
 
 namespace Theme {
 
@@ -29,7 +30,9 @@ struct Colors {
 Mode g_mode = Dark;
 bool g_dark = true;
 bool g_orange = false;
+bool g_console = false;
 QTimer *g_watch = nullptr;
+QString g_accentKey;   // Windows accent colour in effect (System mode)
 
 Colors darkColors()
 {
@@ -73,6 +76,43 @@ Colors lightColors()
     return c;
 }
 
+// Console themes: the flat grey look of a hardware / DAW mixing console
+Colors consoleLightColors()
+{
+    Colors c;
+    c.window = "#cfd2d6";  c.base = "#e4e6e9";  c.altBase = "#d9dce0";
+    c.button = "#e3e5e8";  c.buttonHover = "#eef0f2";
+    c.border = "#6f747d";  c.border2 = "#9fa4ad";
+    c.text = "#14161a";    c.dim = "#5d636d";   c.dimTab = "#2c3038";
+    c.accent = "#2f6fb5";  c.accentText = "#ffffff";
+    c.title = "#1f5a9c";   c.handle = "#8f959e";
+    c.light = "#f4f5f7";   c.midlight = "#dfe1e5"; c.mid = "#a9aeb6";
+    c.dark = "#80858e";    c.shadow = "#5d636d";
+    return c;
+}
+
+Colors consoleDarkColors()
+{
+    Colors c;
+    c.window = "#2b2d31";  c.base = "#34373c";  c.altBase = "#2f3236";
+    c.button = "#3d4047";  c.buttonHover = "#4a4e56";
+    c.border = "#6a6f78";  c.border2 = "#4a4e55";
+    c.text = "#e6e8ec";    c.dim = "#8d929c";   c.dimTab = "#c3c7cf";
+    c.accent = "#3a7bd0";  c.accentText = "#ffffff";
+    c.title = "#6ab0ff";   c.handle = "#5a5f68";
+    c.light = "#44484f";   c.midlight = "#3a3d43"; c.mid = "#5d626b";
+    c.dark = "#1b1c1f";    c.shadow = "#7a7f89";
+    return c;
+}
+
+Colors consoleOrangeColors()
+{
+    Colors c = consoleDarkColors();
+    c.accent = "#e8730c";  c.title = "#ff9a2e";
+    c.handle = "#6b5a48";  c.border = "#7a6a58"; c.border2 = "#54483c";
+    return c;
+}
+
 bool systemIsDark()
 {
 #ifdef Q_OS_WIN
@@ -81,6 +121,28 @@ bool systemIsDark()
     return s.value("AppsUseLightTheme", 1).toInt() == 0;
 #else
     return false;
+#endif
+}
+
+// The accent colour the user chose in Windows (Settings > Personalisation > Colours), "" when it cannot be read
+QString windowsAccent()
+{
+#ifdef Q_OS_WIN
+    QSettings s("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM", QSettings::NativeFormat);
+    bool ok = false;
+    uint v = s.value("AccentColor").toUInt(&ok);          // 0xAABBGGRR
+    int r, g, b;
+    if (ok && v != 0) {
+        r = int(v & 0xFF); g = int((v >> 8) & 0xFF); b = int((v >> 16) & 0xFF);
+    } else {
+        v = s.value("ColorizationColor").toUInt(&ok);     // 0xAARRGGBB
+        if (!ok || v == 0)
+            return QString();
+        r = int((v >> 16) & 0xFF); g = int((v >> 8) & 0xFF); b = int(v & 0xFF);
+    }
+    return QColor(r, g, b).name();
+#else
+    return QString();
 #endif
 }
 
@@ -121,6 +183,7 @@ QString buildStyleSheet(const Colors &c)
         "QPushButton:pressed { background-color: @accent; color: @accentText; }"
         "QPushButton:checked { background-color: @accent; color: @accentText; border-color: @accent; }"
         "QPushButton:disabled { color: @dim; }"
+        "QPushButton[kmRoomy=\"true\"] { padding: 2px 12px; min-width: 52px; min-height: 20px; }"
         "QToolButton { background-color: @btn; color: @dimtab; border: 1px solid @border; border-radius: 5px; padding: 2px 4px; }"
         "QToolButton:hover { background-color: @btnHover; color: @text; border-color: @accent; }"
         "QToolButton:checked { background-color: @accent; color: @accentText; font-weight: bold; border: 2px solid @title; }"
@@ -193,10 +256,8 @@ QString buildStyleSheet(const Colors &c)
     return css;
 }
 
-void applyColors(bool dark, bool orange = false)
+void applyColors(const Colors &c, bool dark, bool orange, bool console)
 {
-    const Colors c = orange ? orangeColors() : (dark ? darkColors() : lightColors());
-
     QPalette p;
     p.setColor(QPalette::Window, QColor(c.window));
     p.setColor(QPalette::WindowText, QColor(c.text));
@@ -222,6 +283,7 @@ void applyColors(bool dark, bool orange = false)
 
     g_dark = dark;
     g_orange = orange;
+    g_console = console;
     qApp->setPalette(p);
     // Fusion draws a dial's tick marks with the Dark role (near-black in the dark theme = invisible on the
     // dark window): give every QDial a lighter one so the scale marks show in the FX windows too.
@@ -235,23 +297,40 @@ void applyColors(bool dark, bool orange = false)
 
 void applyCurrent()
 {
-    if (g_mode == DarkOrange) {
-        applyColors(true, true);
-        return;
+    switch (g_mode) {
+    case DarkOrange:    applyColors(orangeColors(), true, true, false); return;
+    case ConsoleLight:  applyColors(consoleLightColors(), false, false, true); return;
+    case ConsoleDark:   applyColors(consoleDarkColors(), true, false, true); return;
+    case ConsoleOrange: applyColors(consoleOrangeColors(), true, true, true); return;
+    default: break;
     }
-    bool dark = (g_mode == Dark) || (g_mode == System && systemIsDark());
-    applyColors(dark);
+    const bool dark = (g_mode == Dark) || (g_mode == System && systemIsDark());
+    Colors c = dark ? darkColors() : lightColors();
+    g_accentKey.clear();
+    if (g_mode == System) {   // follow Windows for real: light / dark mode and the accent colour
+        const QString acc = windowsAccent();
+        if (!acc.isEmpty()) {
+            g_accentKey = acc;
+            const QColor a(acc);
+            c.accent = acc;
+            c.accentText = (a.lightness() > 150) ? "#101114" : "#ffffff";
+            c.title = dark ? a.lighter(a.lightness() < 110 ? 190 : 130).name() : a.darker(a.lightness() > 150 ? 140 : 100).name();
+        }
+    }
+    applyColors(c, dark, false, false);
 }
 
 }
 
 void init(QApplication &app)
 {
-    app.setStyle(QStyleFactory::create("Fusion"));
+    app.setStyle(new KmStyle(QStringLiteral("Fusion")));   // Fusion + tidier dial tick marks
 
     QSettings st(Config::CONFIG_APP_FILE_PATH, QSettings::IniFormat);
     int m = st.value("Theme", static_cast<int>(Dark)).toInt();
-    g_mode = (m == Dark) ? Dark : (m == Light) ? Light : (m == DarkOrange) ? DarkOrange : System;
+    g_mode = (m == Dark) ? Dark : (m == Light) ? Light : (m == DarkOrange) ? DarkOrange
+           : (m == ConsoleLight) ? ConsoleLight : (m == ConsoleDark) ? ConsoleDark
+           : (m == ConsoleOrange) ? ConsoleOrange : System;
 
     applyCurrent();
 
@@ -259,7 +338,7 @@ void init(QApplication &app)
     g_watch = new QTimer(&app);
     g_watch->setInterval(2000);
     QObject::connect(g_watch, &QTimer::timeout, []() {
-        if (g_mode == System && systemIsDark() != g_dark)
+        if (g_mode == System && (systemIsDark() != g_dark || windowsAccent() != g_accentKey))
             applyCurrent();
     });
     g_watch->start();
@@ -288,6 +367,11 @@ bool isDark()
 bool isOrange()
 {
     return g_orange;
+}
+
+bool isConsole()
+{
+    return g_console;
 }
 
 }

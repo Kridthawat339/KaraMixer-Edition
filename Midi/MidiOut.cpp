@@ -7,7 +7,30 @@ MidiOut::MidiOut()
 
 MidiOut::~MidiOut()
 {
-    message.clear();
+}
+
+// Every message is built in its own buffer: the functions are called from several threads at once (the song
+// sequencer, the MIDI-in callback, the MIDI delay queue, the GUI), and the one shared member buffer they used got
+// cleared / filled by two threads at the same time (wrong or broken messages, hanging notes, crashes).
+void MidiOut::send3(int status, int d1, int d2)
+{
+    std::vector<unsigned char> m { (unsigned char)status, (unsigned char)(d1 & 0x7F), (unsigned char)(d2 & 0x7F) };
+    sendSafe(m);
+}
+
+void MidiOut::send2(int status, int d1)
+{
+    std::vector<unsigned char> m { (unsigned char)status, (unsigned char)(d1 & 0x7F) };
+    sendSafe(m);
+}
+
+void MidiOut::sendSafe(std::vector<unsigned char> &m)
+{
+    try {
+        sendMessage(&m);
+    } catch (...) {
+        // driver error (device unplugged ...): drop the message instead of taking the audio / MIDI thread down
+    }
 }
 
 void MidiOut::setVolume(float vol)
@@ -18,83 +41,51 @@ void MidiOut::setVolume(float vol)
 
     int vol_14bits = (int)(oVolume * 16383);
 
-    message.clear();
-    message.push_back(0xF0);
-    message.push_back(0x7F);
-    message.push_back(0x7F);
-    message.push_back(0x04);
-    message.push_back(0x01);
-    message.push_back(vol_14bits & 0x7f);
-    message.push_back(vol_14bits >> 7);
-    message.push_back(0xF7);
-    sendMessage(&message);
+    std::vector<unsigned char> m { 0xF0, 0x7F, 0x7F, 0x04, 0x01,
+                                   (unsigned char)(vol_14bits & 0x7f), (unsigned char)((vol_14bits >> 7) & 0x7f), 0xF7 };
+    sendSafe(m);
 }
 
 void MidiOut::sendNoteOff(int ch, int note, int velocity)
 {
     if (note < 0 || note > 127)
         return;
-    message.clear();
-    message.push_back(0x80 + ch);
-    message.push_back(note);
-    message.push_back(velocity);
-    sendMessage(&message);
+    send3(0x80 | (ch & 0x0F), note, velocity);
 }
 
 void MidiOut::sendNoteOn(int ch, int note, int velocity)
 {
     if (note < 0 || note > 127)
         return;
-    message.clear();
-    message.push_back(0x90 + ch);
-    message.push_back(note);
-    message.push_back(velocity);
-    sendMessage(&message);
+    send3(0x90 | (ch & 0x0F), note, velocity);
 }
 
 void MidiOut::sendNoteAftertouch(int ch, int note, int value)
 {
     if (note < 0 || note > 127)
         return;
-    message.clear();
-    message.push_back(0xA0 + ch);
-    message.push_back(note);
-    message.push_back(value);
-    sendMessage(&message);
+    send3(0xA0 | (ch & 0x0F), note, value);
 }
 
 void MidiOut::sendController(int ch, int number, int value)
 {
-    message.clear();
-    message.push_back(0xB0 + ch);
-    message.push_back(number);
-    message.push_back(value);
-    sendMessage(&message);
+    send3(0xB0 | (ch & 0x0F), number, value);
 }
 
 void MidiOut::sendProgramChange(int ch, int number)
 {
-    message.clear();
-    message.push_back(0xC0 + ch);
-    message.push_back(number);
-    sendMessage(&message);
+    send2(0xC0 | (ch & 0x0F), number);
 }
 
 void MidiOut::sendChannelAftertouch(int ch, int value)
 {
-    message.clear();
-    message.push_back(0xD0 + ch);
-    message.push_back(value);
-    sendMessage(&message);
+    send2(0xD0 | (ch & 0x0F), value);
 }
 
 void MidiOut::sendPitchBend(int ch, int value)
 {
-    message.clear();
-    message.push_back(0xE0 + ch);
-    message.push_back(value & 0x7F);
-    message.push_back(value / 128);
-    sendMessage(&message);
+    value = value < 0 ? 0 : (value > 16383 ? 16383 : value);
+    send3(0xE0 | (ch & 0x0F), value & 0x7F, value >> 7);
 }
 
 void MidiOut::sendAllNotesOff(int ch)

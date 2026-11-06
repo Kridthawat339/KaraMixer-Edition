@@ -1,5 +1,8 @@
 #include "MidiSynthesizer.h"
 #include "Midi/FaderTaper.h"
+#include "Midi/DevicePicker.h"
+#include "Widgets/ParamGlide.h"
+#include <chrono>
 
 #include "BASSFX/AutoWahFX.h"
 #include "BASSFX/ChorusFX.h"
@@ -192,6 +195,8 @@ MidiSynthesizer::MidiSynthesizer(QObject *parent) : QObject(parent)
     {
         chInstType[i] = InstrumentType::Piano;
         chProgram[i] = 0;
+        rpnSel[i][0] = 127;     // no RPN selected
+        rpnSel[i][1] = 127;
     }
     chInstType[9] = InstrumentType::PercussionEtc;
 }
@@ -385,6 +390,13 @@ void MidiSynthesizer::close()
     if (!openned)
         return;
 
+    {   // the streams are freed: no remembered note may point at them any more
+        QMutexLocker lock(&noteMx);
+        for (int c = 0; c < 16; c++)
+            for (int n = 0; n < 128; n++)
+                noteTarget[c][n] = NoteTarget();
+    }
+
     // Clear FX
     for (InstrumentType t : instMap.keys())
     {
@@ -412,14 +424,16 @@ void MidiSynthesizer::close()
         {
             #ifndef __linux__
             int vIndex = static_cast<int>(t) - HANDLE_VSTI_START;
-            mVstiTempProgram[vIndex] = bv::GetProgram(h);
-            mVstiTempParams[vIndex] = FX::getVSTParams(h);
+            if (h) {   // an empty slot / plug-in that failed to load: keep the stored sound, don't wipe it
+                mVstiTempProgram[vIndex] = bv::GetProgram(h);
+                mVstiTempParams[vIndex] = FX::getVSTParams(h);
 
-            DWORD length = 0;
-            char *chunk = bv::GetChunk(h, false, &length);
-            mVstiChunk[vIndex] = QByteArray(chunk, length);
+                DWORD length = 0;
+                char *chunk = bv::GetChunk(h, false, &length);
+                mVstiChunk[vIndex] = (chunk && length > 0) ? QByteArray(chunk, int(length)) : QByteArray();
 
-            bv::ChannelFree(h);
+                bv::ChannelFree(h);
+            }
             #endif
         }
         else
@@ -838,12 +852,16 @@ void MidiSynthesizer::swapSoundfont(int sfIndex, int toIndex)
         QList<int> instSfMap = instmSf[presetIndex];
         QList<int> drumSfMap = drumSf[presetIndex];
 
+        // both soundfonts changed place: entries of either one follow it (only sfIndex -> toIndex was done, so
+        // the instruments mapped to the other soundfont silently switched to the moved one)
         for (int i=0; i<instSfMap.count(); i++)
         {
             if (instSfMap[i] == 0)
                 continue;
             if (instSfMap[i] == sfIndex)
                 instSfMap[i] = toIndex;
+            else if (instSfMap[i] == toIndex)
+                instSfMap[i] = sfIndex;
         }
 
         for (int i=0; i<drumSfMap.count(); i++)
@@ -852,6 +870,8 @@ void MidiSynthesizer::swapSoundfont(int sfIndex, int toIndex)
                 continue;
             if (drumSfMap[i] == sfIndex)
                 drumSfMap[i] = toIndex;
+            else if (drumSfMap[i] == toIndex)
+                drumSfMap[i] = sfIndex;
         }
 
         setMapSoundfontIndex(presetIndex, instSfMap, drumSfMap);
@@ -906,12 +926,22 @@ void MidiSynthesizer::setStripSoundfont(InstrumentType t, const QString &sfPath,
 
 bool MidiSynthesizer::setMapSoundfontIndex(int presetIndex, QList<int> intrumentSfIndex, QList<int> drumSfIndex)
 {
+    if (presetIndex < 0 || presetIndex >= SF_PRESET_COUNT)
+        return false;
+    // a short list (old / damaged settings file) made setSoundfontPresets() read past its end with at(): crash.
+    // Missing entries = soundfont 0 (the default).
+    const bool shortInst = intrumentSfIndex.count() < 128;
+    while (intrumentSfIndex.count() < 128)
+        intrumentSfIndex.append(0);
+    while (drumSfIndex.count() < 16)
+        drumSfIndex.append(0);
+
     instmSf[presetIndex].clear();
     drumSf[presetIndex].clear();
     instmSf[presetIndex] = intrumentSfIndex;
     drumSf[presetIndex] = drumSfIndex;
 
-    if (intrumentSfIndex.count() < 128 || synth_HSOUNDFONT.count() == 0 || !openned)
+    if (shortInst || synth_HSOUNDFONT.count() == 0 || !openned)
         return false;
 
     if (this->sfPreset == presetIndex) {
@@ -1131,10 +1161,44 @@ void MidiSynthesizer::setSoundfontPresets(int presetIndex)
     }
 }
 
+void MidiSynthesizer::releaseTarget(int ch, const NoteTarget &nt, int velocity)
+{
+    switch (nt.kind) {
+    case 1:
+        BASS_MIDI_StreamEvent(nt.handle, ch, MIDI_EVENT_NOTE, MAKEWORD(nt.note, 0));
+        break;
+    case 2:
+        #ifndef __linux__
+        bv::ProcessEvent(nt.handle, ch, MIDI_EVENT_NOTE, MAKEWORD(nt.note, 0));
+        #endif
+        break;
+    case 3:
+        if (nt.ext)
+            nt.ext->sendNoteOff(ch, nt.note, velocity);
+        break;
+    default:
+        break;
+    }
+}
+
 void MidiSynthesizer::sendNoteOff(int ch, int note, int velocity)
 {
-    if (note < 0 || note > 127)
+    if (note < 0 || note > 127 || ch < 0 || ch > 15)   // ch indexes chInstType[16]
         return;
+
+    // the note-off goes where the note-on went (the strip of the channel may have changed since)
+    if (ch >= 0 && ch < 16) {
+        NoteTarget nt;
+        {
+            QMutexLocker lock(&noteMx);
+            nt = noteTarget[ch][note];
+            noteTarget[ch][note] = NoteTarget();
+        }
+        if (nt.kind != 0) {
+            releaseTarget(ch, nt, velocity);
+            return;
+        }
+    }
 
     if (ch == 9)
         note = remapDrumNote(note);
@@ -1172,20 +1236,36 @@ void MidiSynthesizer::sendNoteOff(int ch, int note, int velocity)
     }
 }
 
+qint64 MidiSynthesizer::nowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 void MidiSynthesizer::sendNoteOn(int ch, int note, int velocity)
 {
-    if (note < 0 || note > 127)
+    if (note < 0 || note > 127 || ch < 0 || ch > 15)   // ch indexes chInstType[16]
         return;
 
+    // a sustain pedal that has been down for more than 12 s while new notes keep coming is stuck (its "pedal up" was lost):
+    // lift it and press it again, so the old notes stop ringing but the song's pedal state is kept
+    if (ch >= 0 && ch < 16 && ch != 9 && sustainSince[ch] != 0 && nowMs() - sustainSince[ch] > 12000) {
+        sendController(ch, 64, 0);
+        sendController(ch, 64, 127);
+    }
+
+    const int key = note;       // the note-off arrives with the song's note number (before the drum remap)
     if (ch == 9)
         note = remapDrumNote(note);
 
+    NoteTarget nt;
+    nt.note = (quint8)note;
+
     if (MidiOut *xo = extPort(typeOf(ch, note))) {
         xo->sendNoteOn(ch, note, velocity);
-        return;
+        nt.kind = 3;
+        nt.ext = xo;
     }
-
-    if (ch == 9)
+    else if (ch == 9)
     {
         int vstiIndex = instMap[MidiHelper::getInstrumentDrumType(note)].vsti;
         if (vstiIndex == -1)
@@ -1193,6 +1273,8 @@ void MidiSynthesizer::sendNoteOn(int ch, int note, int velocity)
             InstrumentType t = MidiHelper::getInstrumentDrumType(note);
             applyDrumTune(note, handles[t]);
             BASS_MIDI_StreamEvent(handles[t], 9, MIDI_EVENT_NOTE, MAKEWORD(note, velocity));
+            nt.kind = 1;
+            nt.handle = handles[t];
             emit noteOnSended(t, instMap[t].bus, 9, note, velocity);
         }
         else
@@ -1200,6 +1282,8 @@ void MidiSynthesizer::sendNoteOn(int ch, int note, int velocity)
             #ifndef __linux__
             InstrumentType t = static_cast<InstrumentType>(vstiIndex + HANDLE_VSTI_START);
             bv::ProcessEvent(handles[t], 9, MIDI_EVENT_NOTE, MAKEWORD(note, velocity));
+            nt.kind = 2;
+            nt.handle = handles[t];
             emit noteOnSended(t, instMap[t].bus, 9, note, velocity);
             #endif
         }
@@ -1211,6 +1295,8 @@ void MidiSynthesizer::sendNoteOn(int ch, int note, int velocity)
         {
             InstrumentType t = chInstType[ch];
             BASS_MIDI_StreamEvent(handles[t], ch, MIDI_EVENT_NOTE, MAKEWORD(note, velocity));
+            nt.kind = 1;
+            nt.handle = handles[t];
             emit noteOnSended(t, instMap[t].bus, ch, note, velocity);
         }
         else
@@ -1218,10 +1304,24 @@ void MidiSynthesizer::sendNoteOn(int ch, int note, int velocity)
             #ifndef __linux__
             InstrumentType t = static_cast<InstrumentType>(vstiIndex + HANDLE_VSTI_START);
             bv::ProcessEvent(handles[t], ch, MIDI_EVENT_NOTE, MAKEWORD(note, velocity));
+            nt.kind = 2;
+            nt.handle = handles[t];
             emit noteOnSended(t, instMap[t].bus, ch, note, velocity);
             #endif
         }
     }
+
+    if (ch < 0 || ch > 15 || nt.kind == 0)
+        return;
+    NoteTarget old;
+    {
+        QMutexLocker lock(&noteMx);
+        old = noteTarget[ch][key];
+        noteTarget[ch][key] = nt;
+    }
+    // the same key struck again on another strip / port: the earlier one would never get its note-off
+    if (old.kind != 0 && (old.kind != nt.kind || old.handle != nt.handle || old.ext != nt.ext || old.note != nt.note))
+        releaseTarget(ch, old, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,7 +1405,7 @@ void MidiSynthesizer::applyDrumTune(int note, HSTREAM stream)
 
 void MidiSynthesizer::sendNoteAftertouch(int ch, int note, int value)
 {
-    if (note < 0 || note > 127)
+    if (note < 0 || note > 127 || ch < 0 || ch > 15)
         return;
 
     if (ch == 9)
@@ -1369,6 +1469,27 @@ void MidiSynthesizer::sendController(int ch, int number, int value)
                 return;
             break;
         default: break;
+        }
+    }
+
+    if (ch >= 0 && ch < 16) {
+        if (number == 64)
+            sustainSince[ch] = value >= 64 ? (sustainSince[ch] ? sustainSince[ch] : nowMs()) : 0;
+        else if (number == 121)
+            sustainSince[ch] = 0;
+    }
+    if (ch >= 0 && ch < 16) {
+        // follow the RPN selection of each channel; a song / the karaoke program that sets the coarse tuning far away
+        // (more than an octave) would leave that instrument (e.g. a guitar) out of key: such a value is not applied
+        // (rpnSel is set to "none" in the constructor: a function-static "inited" flag was shared by every instance)
+        if (number == 101) rpnSel[ch][0] = value;
+        else if (number == 100) rpnSel[ch][1] = value;
+        else if (number == 121) { rpnSel[ch][0] = 127; rpnSel[ch][1] = 127; }
+        else if ((number == 6 || number == 38) && rpnSel[ch][0] == 0 && rpnSel[ch][1] == 2) {
+            if (number == 6 && (value < 52 || value > 76))
+                return;                                   // coarse tune outside +-12 semitones: ignore
+            if (number == 38)
+                return;
         }
     }
 
@@ -1480,8 +1601,8 @@ void MidiSynthesizer::sendProgramChange(int ch, int number)
 
     sendToAllMidiStream(ch, MIDI_EVENT_PROGRAM, number);
 
-    if (ch != 9) {
-        chProgram[ch & 15] = number;
+    if (ch >= 0 && ch < 16 && ch != 9) {
+        chProgram[ch] = number;
         chInstType[ch] = melodicTypeFor(ch, number);
     }
 }
@@ -1542,6 +1663,11 @@ void MidiSynthesizer::sendAllNotesOff(int ch)
     if (!extOutName.isEmpty() && ch >= 0 && ch < 16)
         extTeeAll(0xB0 | ch, 123, 0);
     sendToAllMidiStream(ch, MIDI_EVENT_NOTESOFF, 0);
+    if (ch >= 0 && ch < 16) {
+        QMutexLocker lock(&noteMx);
+        for (int n = 0; n < 128; n++)
+            noteTarget[ch][n] = NoteTarget();
+    }
 }
 
 void MidiSynthesizer::sendAllNotesOff()
@@ -1555,6 +1681,8 @@ void MidiSynthesizer::sendResetAllControllers(int ch)
 {
     if (!extOutName.isEmpty() && ch >= 0 && ch < 16)
         extTeeAll(0xB0 | ch, 121, 0);
+    if (ch >= 0 && ch < 16)
+        sustainSince[ch] = 0;
     sendToAllMidiStream(ch, MIDI_EVENT_RESET, 0);
     sendToAllMidiStream(ch, MIDI_EVENT_PITCHRANGE, 2);
 }
@@ -1682,7 +1810,13 @@ void MidiSynthesizer::setPan(InstrumentType t, int pan)
     if (!openned)
         return;
 
-    BASS_ChannelSetAttribute(handles[t], BASS_ATTRIB_PAN, instMap[t].pan / 100.0f);
+    // glide to the new position (~40 ms) instead of jumping: a turned knob moves the sound without clicks
+    ParamGlide::set(this, QStringLiteral("pan%1").arg(static_cast<int>(t)), instMap[t].pan / 100.0f,
+                    [this, t](float v) {
+                        if (HSTREAM h = handles.value(t, 0)) {
+                            BASS_ChannelSetAttribute(h, BASS_ATTRIB_PAN, v);
+                        }
+                    });
 }
 
 void MidiSynthesizer::attachSendReverb(InstrumentType t, DWORD stream)
@@ -1698,11 +1832,24 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     instMap[t].reverb = level;
 
     Reverb2FX *rv = sendRv.value(t, nullptr);
+    const QString glideKey = QStringLiteral("rvWet%1").arg(static_cast<int>(t));
+    auto applyWet = [this, t](float v) {
+        if (Reverb2FX *r = sendRv.value(t, nullptr))
+            r->setWetMix(v);
+    };
 
     if (level == 0)
     {
-        if (rv)
-            rv->off();          // fully dry: no processing at all
+        // fully dry: fade the wet level out first (no click, the tail is not cut off hard), then take the
+        // free-verb out so it costs nothing - unless the knob has been turned up again meanwhile
+        if (rv && rv->isOn()) {
+            ParamGlide::set(this, glideKey, 0.0f, applyWet);
+            QTimer::singleShot(300, this, [this, t]() {
+                if (instMap.value(t).reverb == 0)
+                    if (Reverb2FX *r = sendRv.value(t, nullptr))
+                        r->off();
+            });
+        }
         return;
     }
 
@@ -1721,17 +1868,22 @@ void MidiSynthesizer::setReverb(InstrumentType t, int level)
     // The knob has to be clearly audible over its whole travel: the free-verb wet level goes up to 3.0
     // (it was capped at 1.6, so even a full knob was faint), and the room grows with the knob.
     const float k = level / 100.0f;
+    const float wet = reverbStrong ? 3.0f * std::pow(k, 0.85f) : 1.6f * k;
     if (reverbStrong) {
-        rv->setWetMix(3.0f * std::pow(k, 0.85f));
         rv->setRoomSize(0.7f + 0.25f * k);
         rv->setDamp(0.35f);
     } else {                    // tight and short
-        rv->setWetMix(1.6f * k);
         rv->setRoomSize(0.75f);
         rv->setDamp(0.45f);
     }
     rv->setDryMix(1.0f);
-    rv->on();
+    if (!rv->isOn()) {
+        rv->setWetMix(0.0f);    // switched in silent, then faded up below
+        ParamGlide::set(this, glideKey, 0.0f, applyWet);
+        rv->on();
+    }
+    // the wet level glides (~40 ms) while the knob is turned: no zipper noise
+    ParamGlide::set(this, glideKey, wet, applyWet);
 }
 
 void MidiSynthesizer::setReverbStrong(bool strong)
@@ -1762,7 +1914,9 @@ void MidiSynthesizer::setMute(InstrumentType t, bool m)
     if (!openned)
         return;
 
-    if (m)
+    // un-muting a strip while another strip is soloed must keep it silent (enable = not muted and, with a solo
+    // active, soloed itself): the old code turned it back up whatever the solo state
+    if (!instMap[t].enable)
         setVolSmooth(handles[t], 0.0f);
     else
         setVolSmooth(handles[t], stripGain(instMap[t]));
@@ -1771,8 +1925,18 @@ void MidiSynthesizer::setMute(InstrumentType t, bool m)
 void MidiSynthesizer::setSolo(InstrumentType t, bool s)
 {
     instMap[t].solo = s;
+    applySolo();
+}
 
-    bool us = false;
+void MidiSynthesizer::setDrumSolo(bool on)
+{
+    drumSolo = on;
+    applySolo();
+}
+
+void MidiSynthesizer::applySolo()
+{
+    bool us = drumSolo;
 
     for (const Instrument &im : instMap.values()) {
         if (im.solo) {
@@ -1801,7 +1965,7 @@ void MidiSynthesizer::setUseVSTi(InstrumentType t, int vstiIndex)
     if (isBusType(t))
         return;
 
-    if (vstiIndex < -1 || vstiIndex > 4)
+    if (vstiIndex < -1 || vstiIndex >= HANDLE_VSTI_COUNT)   // 4 VSTi: 0..3 (index 4 pointed at the first bus stream)
         return;
 
     #ifndef __linux__
@@ -1817,6 +1981,10 @@ void MidiSynthesizer::setUseVSTi(InstrumentType t, int vstiIndex)
             bv::ProcessEvent(handles[type], ch, MIDI_EVENT_NOTESOFF, 0);
     }
     #endif
+
+    // while something is soloed, the VSTi this strip plays through opens / closes with it (calculateEnable)
+    if (useSolo)
+        applySolo();
 }
 
 namespace {
@@ -1894,9 +2062,11 @@ void MidiSynthesizer::setSpeaker(InstrumentType t, SpeakerType speaker)
 
     BASS_Mixer_ChannelRemove(handles[t]);
     #ifndef __linux__
-    bv::ChannelFree(handles[t]);
+    if (vstiStream)
+        bv::ChannelFree(handles[t]);        // a VSTi stream is freed by BASS_VST (freeing it twice was an error)
+    else
     #endif
-    BASS_StreamFree(handles[t]);
+        BASS_StreamFree(handles[t]);
 
     handles[t] = createStream(t);
     attachTrimDsp(t, handles[t]);
@@ -2176,7 +2346,7 @@ FX *MidiSynthesizer::addFX(InstrumentType type, DWORD uid)
 
 bool MidiSynthesizer::removeFX(InstrumentType type, int fxIndex)
 {
-    if (fxIndex >= instMap[type].FXs.count())
+    if (fxIndex < 0 || fxIndex >= instMap[type].FXs.count())
         return false;
 
     delete instMap[type].FXs.takeAt(fxIndex);
@@ -2187,7 +2357,7 @@ bool MidiSynthesizer::removeFX(InstrumentType type, int fxIndex)
 void MidiSynthesizer::setFXBypass(InstrumentType type, int fxIndex, bool state)
 {
 
-    if (fxIndex >= instMap[type].FXs.count())
+    if (fxIndex < 0 || fxIndex >= instMap[type].FXs.count())
         return;
 
     instMap[type].FXs[fxIndex]->setBypass(state);
@@ -2358,12 +2528,16 @@ QString MidiSynthesizer::vstiFile(int vstiIndex)
 
 DWORD MidiSynthesizer::vstiHandle(int vstiIndex)
 {
+    if (vstiIndex < 0 || vstiIndex > 3)
+        return 0;
     InstrumentType t = static_cast<InstrumentType>(HANDLE_VSTI_START+vstiIndex);
     return handles[t];
 }
 
 int MidiSynthesizer::vstiProgram(int vstiIndex)
 {
+    if (vstiIndex < 0 || vstiIndex > 3)
+        return 0;
     DWORD h = vstiHandle(vstiIndex);
     if (isOpened() && h != 0)
         return bv::GetProgram(h);
@@ -2373,6 +2547,8 @@ int MidiSynthesizer::vstiProgram(int vstiIndex)
 
 QList<float> MidiSynthesizer::vstiParams(int vstiIndex)
 {
+    if (vstiIndex < 0 || vstiIndex > 3)
+        return QList<float>();
     DWORD h = vstiHandle(vstiIndex);
     if (isOpened() && h != 0)
         return FX::getVSTParams(h);
@@ -2382,6 +2558,8 @@ QList<float> MidiSynthesizer::vstiParams(int vstiIndex)
 
 QByteArray MidiSynthesizer::vstiChunk(int vstiIndex)
 {
+    if (vstiIndex < 0 || vstiIndex > 3)
+        return QByteArray();
     DWORD h = vstiHandle(vstiIndex);
     if (isOpened() && h != 0)
     {
@@ -2407,6 +2585,11 @@ DWORD MidiSynthesizer::setVSTiFile(int vstiIndex, const QString &file)
         return vsti;
 
     mVstiFiles[vstiIndex] = file;
+    // another plug-in: the kept sound (chunk / program / parameters) belonged to the old one and must not be
+    // loaded into the new one (the saved state of the new one is applied by the caller afterwards)
+    mVstiChunk[vstiIndex].clear();
+    mVstiTempProgram[vstiIndex] = 0;
+    mVstiTempParams[vstiIndex].clear();
 
     if (!openned)
         return 0;
@@ -2475,6 +2658,7 @@ void MidiSynthesizer::removeVSTiFile(int vstiIndex)
     mVstiInfos[vstiIndex] = BASS_VST_INFO();
     mVstiTempProgram[vstiIndex] = 0;
     mVstiTempParams[vstiIndex].clear();
+    mVstiChunk[vstiIndex].clear();
 }
 
 #endif
@@ -2595,12 +2779,44 @@ void MidiSynthesizer::setSfToStream()
 
 void MidiSynthesizer::calculateEnable()
 {
+    // "Solo drums" counts every drum / percussion strip as soloed, without touching their own S buttons
+    auto soloed = [this](const Instrument &s) {
+        return s.solo || (drumSolo && isDrumStrip(static_cast<int>(s.type)));
+    };
+
+    // A soloed strip is heard through whatever it plays through: the VSTi its notes go to (instead of its own stream)
+    // and the bus it is routed to. Those strips have to stay open while something is soloed, otherwise the strip that
+    // was soloed is the one you cannot hear.
+    quint32 vstiOpen = 0;
+    quint32 busOpen = 0;
+    if (useSolo) {
+        const QList<Instrument> all = instMap.values();
+        for (const Instrument &m : all) {
+            if (soloed(m) && !isBusType(m.type) && m.vsti >= 0 && m.vsti < HANDLE_VSTI_COUNT)
+                vstiOpen |= (1u << m.vsti);
+        }
+        for (const Instrument &m : all) {
+            if (isBusType(m.type) || m.bus < 0 || m.bus >= HANDLE_BUS_COUNT)
+                continue;
+            const int vi = static_cast<int>(m.type) - HANDLE_VSTI_START;    // an open VSTi strip counts as soloed here
+            const bool viaVsti = vi >= 0 && vi < HANDLE_VSTI_COUNT && (vstiOpen & (1u << vi)) != 0;
+            if (soloed(m) || viaVsti)
+                busOpen |= (1u << m.bus);
+        }
+    }
+
     for (Instrument i : instMap.values()) {
         //Instrument i = im.second;
         if (useSolo) {
+            const int vi = static_cast<int>(i.type) - HANDLE_VSTI_START;
+            const int bi = static_cast<int>(i.type) - HANDLE_BUS_START;
             if (i.mute)
                 instMap[i.type].enable = false;
-            else if (i.solo)
+            else if (soloed(i))
+                instMap[i.type].enable = true;
+            else if (vi >= 0 && vi < HANDLE_VSTI_COUNT && (vstiOpen & (1u << vi)) != 0)
+                instMap[i.type].enable = true;      // not soloed itself, but a soloed strip plays through it
+            else if (bi >= 0 && bi < HANDLE_BUS_COUNT && (busOpen & (1u << bi)) != 0)
                 instMap[i.type].enable = true;
             else
                 instMap[i.type].enable = false;
@@ -2711,7 +2927,8 @@ void MidiSynthesizer::setExtMidiOut(InstrumentType t, const QString &deviceName)
     }
 
     if (!extPorts.contains(deviceName)) {
-        int idx = MidiPlayer::midiDevices().indexOf(deviceName);
+        // same name written a little differently on this computer ("2- Device", "Device 1") still counts
+        int idx = DevicePicker::indexOfLoose(MidiPlayer::midiDevices(), deviceName);
         MidiOut *out = nullptr;
         if (idx >= 0) {
             try {

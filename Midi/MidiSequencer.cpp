@@ -39,6 +39,8 @@ int MidiSequencer::positionTick()
 
 int MidiSequencer::durationTick()
 {
+    if (_midi->events().isEmpty())
+        return 0;
     return _midi->events().back()->tick();
 }
 
@@ -74,6 +76,7 @@ void MidiSequencer::setPositionTick(int t)
     _startPlayTime = _midi->timeFromTick(tick, _midiSpeed) * 1000;
     _positionMs = _startPlayTime;
     _positionTick = t;
+    _chase = true;
 
     _mutex.unlock();
 
@@ -110,6 +113,10 @@ bool MidiSequencer::load(const QString &file, bool seekFileChunkID)
 
     if (!_midi->read(file, seekFileChunkID))
         return false;
+    if (_midi->events().isEmpty()) {   // valid header but no events: every events().last() / back() would crash
+        _midi->clear();
+        return false;
+    }
 
     _midiSpeed = 0;
     _midiSpeedTemp = 0;
@@ -175,7 +182,7 @@ void MidiSequencer::setEndTick(int tick)
     if (tick == 0) {
         _endTick = 0;
         if (_endEvent != nullptr) {
-            _midi->takeEvent(_endEventIndex);
+            _midi->takeEvent(_endEvent);
             delete _endEvent;
             _endEvent = nullptr;
             _endEventIndex = 0;
@@ -185,31 +192,23 @@ void MidiSequencer::setEndTick(int tick)
         if (_endEvent == nullptr) {
             _endEvent = new MidiEvent();
         } else {
-            _midi->takeEvent(_endEventIndex);
+            _midi->takeEvent(_endEvent);
         }
         _endEvent->setTick(tick);
 
-        MidiEvent *halfEvent = _midi->events()[ _midi->events().size() / 2 ];
-
-        int index;
-
-        if (tick >= halfEvent->tick()) {
-            index = _midi->events().size() - 1;
-            for (int i = index; i >= 0; i--) {
-                index = i;
-                if (_midi->events()[i]->tick() < tick)
-                    break;
-            }
-        } else {
-            index = 0;
-            for (int i = index; i < _midi->events().size(); i++) {
-                index = i;
-                if (_midi->events()[i]->tick() >= tick)
-                    break;
-            }
+        // the end marker goes in front of the first event at / after `tick` (events are sorted by tick). The old
+        // backward search stopped ON the last earlier event and inserted in front of it, so that event was cut off.
+        const QVector<MidiEvent *> &evs = _midi->events();
+        int lo = 0, hi = evs.size();
+        while (lo < hi) {
+            const int mid = (lo + hi) / 2;
+            if (int(evs[mid]->tick()) < tick)
+                lo = mid + 1;
+            else
+                hi = mid;
         }
 
-        _endEventIndex = index;
+        _endEventIndex = lo;
         _midi->insertEvent(_endEventIndex, _endEvent);
     }
 }
@@ -243,12 +242,19 @@ void MidiSequencer::run()
     _playing = true;
     _stopped = false;
     _finished = false;
+    const bool chase = _chase;
+    _chase = false;
 
     _mutex.unlock();
 
-    if (_positionTick <= _startTick) {
-        for (MidiEvent *e : _midi->events()) {
-            if (e->tick() >= _startTick)
+    // From the start (or the cut start bar): the set-up events before it. After a seek: every set-up event before
+    // the new position, so the instruments, volumes, pedals and pitch bends are the ones the song has there
+    // (otherwise the part after the seek plays with whatever program / controller state was left before).
+    if (_positionTick <= _startTick || chase) {
+        const int chaseEnd = chase ? qMin(_playedIndex, _midi->events().count()) : _midi->events().count();
+        for (int k = 0; k < chaseEnd; k++) {
+            MidiEvent *e = _midi->events()[k];
+            if (!chase && e->tick() >= _startTick)
                 break;
             if (e->eventType() != MidiEventType::Meta)
                 switch (e->eventType()) {
@@ -298,7 +304,7 @@ void MidiSequencer::run()
             if (_midiChangeBpmSpeed) {
                 _midiChangeBpmSpeed = false;
                 _midiSpeed = _midiSpeedTemp;
-                _startPlayTime = _midi->timeFromTick(_midi->events()[i-1]->tick(), _midiSpeed) * 1000;
+                _startPlayTime = _midi->timeFromTick(_midi->events()[qMax(0, i - 1)]->tick(), _midiSpeed) * 1000;
                 _eTimer->restart();
             }
 
@@ -308,6 +314,13 @@ void MidiSequencer::run()
             if (waitTime > 0) {
                 //msleep(waitTime);
                 _waitCondition.wait(&_mutex, waitTime);
+                if (!_playing) {
+                    // stopped / seeking while waiting: this event was not due yet - it is played on resume
+                    // (sending it now played it early, and once more when playback went on)
+                    _playedIndex = i;
+                    _mutex.unlock();
+                    break;
+                }
             }
 
             _positionMs = eventTime;

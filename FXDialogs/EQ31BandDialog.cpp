@@ -64,7 +64,10 @@ void EQ31BandDialog::resetGian(int sliderIndex)
 {
     EQFrequency31Range freq = sliderMap.keys()[sliderIndex];
 
-    fx->setGain(freq, 0.0f);
+    // through the same glide as the slider: a glide still running for this band would otherwise pull it back to the
+    // old value right after the reset
+    ParamGlide::set(this, QStringLiteral("gain") + QString::number(int(freq)), 0.0f,
+                    [this, freq](float v) { fx->setGain(freq, v); });
 
     sliderMap[freq]->setLevel(0);
     lbdbMap[freq]->setText(QString::number(0.0f, 'f', 1));

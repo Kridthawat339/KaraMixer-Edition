@@ -51,8 +51,8 @@ protected:
 
     void paintEvent(QPaintEvent *) override
     {
-        if (width() < 70)
-            return;
+        if (width() < MINW)         // too narrow for the two tiles to show a value next to the label: a blank gap, not
+            return;                 // a squeezed, cut-off pair of tiles
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
         const int gap = 8;
@@ -80,6 +80,7 @@ protected:
 
 private:
     static const int HIST = 40;
+    static const int MINW = 180;
     QTimer timer;
     QVector<double> cpuHist, ramHist;
     double cpuNow = 0, ramNow = 0, usedGb = 0, totalGb = 0;

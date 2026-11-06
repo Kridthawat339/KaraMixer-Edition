@@ -35,6 +35,7 @@
 #include "Widgets/DialogSkin.h"
 #include "Widgets/EventLog.h"
 #include "Widgets/KaraokeLauncher.h"
+#include "Widgets/PopupLifter.h"
 
 #ifdef __linux__
 #include <QFontDatabase>
@@ -53,6 +54,21 @@ void makeVSTList(QSplashScreen *splash, MidiSynthesizer *synth);
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    {
+        // Windows' "Text size" (Settings > Accessibility > Text size) and a mixed 100 % / 150 % two-screen setup make the
+        // system font Qt starts from much bigger (24 pt seen on a customer PC instead of 9), but the mixer's buttons
+        // have fixed pixel sizes: the page tabs, DRUM / LIVE / BUS ... showed huge, cut-off text. The program uses the
+        // standard 9 pt its layouts were made for, set before the first window (the splash) is drawn.
+        QFont f = a.font();
+        const qreal stdPt = 9.0;
+        a.setProperty("kmSystemFontPt", f.pointSizeF());
+        a.setProperty("kmSystemFontFamily", f.family());
+        if (f.pointSizeF() > stdPt + 0.25) {
+            f.setPointSizeF(stdPt);
+            a.setFont(f);       // (also drops the per-class fonts of the system theme: menus / tooltips follow this one)
+        }
+    }
+    PopupLifter::install();      // a plug-in's message box must not open hidden behind the (topmost) mixer
 
     // Started by "Open config": give the previous instance time to release audio/MIDI devices.
     if (a.arguments().contains("--delay"))
@@ -146,6 +162,7 @@ int main(int argc, char *argv[])
                            ahs.value("MixerAutoHideDelay", 3.0).toDouble(),
                            ahs.value("MixerAutoHideProgram", "").toString());
     }
+    w.startRemoteAtLaunch();             // phone control that starts with the program (menu tick), if it is switched on
 
     if (KaraokeLauncher::autoLaunch())   // "open the karaoke program together with the mixer" (menu)
         QTimer::singleShot(1500, mixer, []() { KaraokeLauncher::launch(nullptr, false); });
@@ -187,7 +204,7 @@ void registerMetaType()
     //qRegisterMetaType<QList<QList<float>>>("QList<QList<float>>");
     qRegisterMetaTypeStreamOperators<QList<QList<float>>>("QList<QList<float>>");
 
-    qRegisterMetaTypeStreamOperators<QList<QByteArray>>("QList<QByteArray>>");
+    qRegisterMetaTypeStreamOperators<QList<QByteArray>>("QList<QByteArray>");
 }
 
 void checkDatabase(QSplashScreen *splash, SongDatabase *db)
@@ -209,6 +226,9 @@ void loadSoundfonts(QSplashScreen *splash, MidiSynthesizer *synth)
 
     // set soundfont to synth
     QStringList sfList = settings.value("SynthSoundfonts", QStringList()).toStringList();
+    // saved index -> index in the synth. A soundfont that cannot be loaded (file moved, locked for another PC) is left
+    // out, so every later one moves up: the saved volumes and instrument maps used to land on the wrong soundfont.
+    QVector<int> newIndex(sfList.count(), -1);
     settings.beginReadArray("SynthSoundfontsVolume");
     for (int i=0; i<sfList.count(); i++)
     {
@@ -218,10 +238,16 @@ void loadSoundfonts(QSplashScreen *splash, MidiSynthesizer *synth)
         splash->showMessage("กำลังโหลด : " + QFileInfo(sfList.at(i)).fileName(), Qt::AlignBottom|Qt::AlignRight, QColor("#cfd3dc"));
         qApp->processEvents();
 
-        if (synth->addSoundfont(sfList.at(i)))
-            synth->setSoundfontVolume(i, volume / 100.0f);
+        if (synth->addSoundfont(sfList.at(i))) {
+            newIndex[i] = synth->soundfontFiles().count() - 1;
+            synth->setSoundfontVolume(newIndex[i], volume / 100.0f);
+        }
     }
     settings.endArray();
+    auto remap = [&newIndex](QList<int> &m) {
+        for (int &v : m)
+            v = (v > 0 && v < newIndex.count() && newIndex[v] > 0) ? newIndex[v] : 0;   // missing -> default soundfont
+    };
 
 
     // set Map soundfont
@@ -237,8 +263,12 @@ void loadSoundfonts(QSplashScreen *splash, MidiSynthesizer *synth)
 
         if (sfMap.count() == 0)
             sfMap = synth->getMapSoundfontIndex(i);
+        else
+            remap(sfMap);
         if (sfDrumMap.count() == 0)
             sfDrumMap = synth->getDrumMapSfIndex(i);
+        else
+            remap(sfDrumMap);
 
         synth->setMapSoundfontIndex(i, sfMap, sfDrumMap);
     }
@@ -289,7 +319,7 @@ void makeVSTList(QSplashScreen *splash, MidiSynthesizer *synth)
     QStringList dirs = st.value("VSTDirs", QStringList()).toStringList();
 
     QStringList vstDirs;
-    vstDirs << QDir::currentPath() + "/VST";
+    vstDirs << QCoreApplication::applicationDirPath() + "/VST";
     vstDirs += dirs;
 
     QMap<uint, VSTNamePath> vstList;

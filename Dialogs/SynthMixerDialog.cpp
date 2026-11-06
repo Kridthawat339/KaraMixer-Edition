@@ -12,6 +12,9 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <QVariantAnimation>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QEasingCurve>
 #include <QMessageBox>
 #include <QApplication>
@@ -83,6 +86,7 @@
 #include "FXDialogs/EQ15BandDialog.h"
 #include "FXDialogs/EQ31BandDialog.h"
 #include "FXDialogs/ReverbFXDialog.h"
+#include "Midi/DevicePicker.h"
 
 #ifndef __linux__
 #include <bass_vst.h>
@@ -320,6 +324,10 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
         ui->horizontalLayout_2->removeWidget(btnDrumTune);
         ui->horizontalLayout_2->insertWidget(ui->horizontalLayout_2->indexOf(ui->btnMenu), btnDrumTune);
         btnDrumTune->setMinimumWidth(90);
+        // "Solo drums": only the drum / percussion strips are heard, to test them. Created last so it sits first in the
+        // row, between the CPU / RAM monitor and "ตัดจูนกลอง". Not saved: it always starts off.
+        btnSoloDrums = addChk(tr("โซโล่กลอง"), tr("เล่นเสียงเฉพาะชุดกลองและเพอร์คัชชั่นทั้งหมด เพื่อฟังทดสอบ  •  กดอีกครั้งเพื่อกลับมาเล่นทุกแทร็ก"));
+        connect(btnSoloDrums, &QToolButton::clicked, this, [this](bool on) { synth->setDrumSolo(on); });
         // tab row lines up with the columns below: tab 0 = left panel width, tab 1 starts where the strips start
         ui->horizontalLayout_4->setSpacing(6);
         ui->btnPreset0->setFixedWidth(78);
@@ -404,7 +412,7 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
                                            ui->btnPreset8, ui->btnPreset9, ui->btnPreset10 };
         for (QWidget *w : presets)
             gf->addCell(w, QMargins(1, 1, 1, 1));
-        for (QWidget *w : QList<QWidget *>{ chkLockDrum, chkLockKick, chkLockSnare, chkLockBass, chkNoTune, btnDrumTune })
+        for (QWidget *w : QList<QWidget *>{ btnSoloDrums, chkLockDrum, chkLockKick, chkLockSnare, chkLockBass, chkNoTune, btnDrumTune })
             gf->addCell(w, QMargins(1, 1, 1, 1));
         // Menu button (top right) and the left-hand button column
         ui->btnMenu->setStyleSheet("QPushButton, QPushButton:hover, QPushButton:pressed { background: transparent; border: none; border-radius: 6px; padding: 2px 8px; }");
@@ -510,7 +518,9 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
         for (InstrumentType t : chInstMap.keys())
         {
             st.setArrayIndex(static_cast<int>(t));
-            int dv = st.value("Device", 0).toInt();
+            // by name: the number can be another card (or none) on another computer
+            int dv = DevicePicker::resolveStripDevice(st.value("Device", 0).toInt(),
+                                                      st.value("DeviceName", "").toString(), MidiSynthesizer::audioDevices());
             int  b = st.value("Bus", -1).toInt();
             int ml = st.value("Volume", 50).toInt();
             int pn = st.value("Pan", 0).toInt();
@@ -882,7 +892,8 @@ void SynthMixerDialog::reloadFromSettings()
     for (InstrumentType t : chInstMap.keys())
     {
         st.setArrayIndex(static_cast<int>(t));
-        const int dv = st.value("Device", 0).toInt();
+        const int dv = DevicePicker::resolveStripDevice(st.value("Device", 0).toInt(),
+                                                        st.value("DeviceName", "").toString(), MidiSynthesizer::audioDevices());
         const int b = st.value("Bus", -1).toInt();
         const int ml = st.value("Volume", 50).toInt();
         const int pn = st.value("Pan", 0).toInt();
@@ -993,20 +1004,22 @@ void SynthMixerDialog::settingValues()
     // soundfont presets
     st.setValue("SoundfontPresets", synth->soundfontPresets());
 
-    // Master Eq
-    auto eq = synth->equalizer31BandFXs()[0];
-    st.setValue("MasterEqOn", eq->isOn());
-    st.setValue("MasterEqParams", QVariant::fromValue(eq->params()));
-
-    // Master Chorus
-    auto chorus = synth->chorusFXs()[0];
-    st.setValue("MasterChorusOn", chorus->isOn());
-    st.setValue("MasterChorusParams", QVariant::fromValue(chorus->params()));
-
-    // Master Reverb
-    auto reverb = synth->reverbFXs()[0];
-    st.setValue("MasterReverbOn", reverb->isOn());
-    st.setValue("MasterReverbParams", QVariant::fromValue(reverb->params()));
+    // Master Eq / Chorus / Reverb (no output device at all: there is no mixer and no effect - [0] crashed on exit)
+    const QList<Equalizer31BandFX *> eqs = synth->equalizer31BandFXs();
+    if (!eqs.isEmpty() && eqs[0]) {
+        st.setValue("MasterEqOn", eqs[0]->isOn());
+        st.setValue("MasterEqParams", QVariant::fromValue(eqs[0]->params()));
+    }
+    const QList<Chorus2FX *> chorusList = synth->chorusFXs();
+    if (!chorusList.isEmpty() && chorusList[0]) {
+        st.setValue("MasterChorusOn", chorusList[0]->isOn());
+        st.setValue("MasterChorusParams", QVariant::fromValue(chorusList[0]->params()));
+    }
+    const QList<Reverb2FX *> reverbList = synth->reverbFXs();
+    if (!reverbList.isEmpty() && reverbList[0]) {
+        st.setValue("MasterReverbOn", reverbList[0]->isOn());
+        st.setValue("MasterReverbParams", QVariant::fromValue(reverbList[0]->params()));
+    }
 
     // Per-strip soundfont choices (by file path)
     st.beginWriteArray("StripSoundfont");
@@ -1040,6 +1053,7 @@ void SynthMixerDialog::settingValues()
 
 
     LEDVu *vu = chInstMap.first()->vuBar();
+    st.setValue("LedBgColor", vu->backgroundColor().name());   // read at start-up, but was never written
     st.setValue("LedColorOn1", vu->ledColorOn1().name());
     st.setValue("LedColorOn2", vu->ledColorOn2().name());
     st.setValue("LedColorOn3", vu->ledColorOn3().name());
@@ -1090,6 +1104,11 @@ void SynthMixerDialog::settingValues()
         st.setValue("Bus", synth->busGroup(t));
         st.setValue("VSTi", synth->useVSTi(t));
         st.setValue("ExtMidiOut", synth->extMidiOut(t));
+        {   // store the name of the strip's card next to its number
+            const int dvSaved = st.value("Device", 0).toInt();
+            if (dvSaved >= 1 && !st.contains("DeviceName") && synth->device(t) == dvSaved)
+                st.setValue("DeviceName", DevicePicker::stripDeviceName(dvSaved, MidiSynthesizer::audioDevices()));
+        }
 
         QList<uint> fxU = synth->fxUids(t);
         QList<bool> fxB = synth->fxBypass(t);
@@ -1163,7 +1182,8 @@ void SynthMixerDialog::setMute(InstrumentType t, bool m)
         if (synth->instrument(type).bus != (static_cast<int>(t) - synth->HANDLE_MIDI_COUNT))
             continue;
         synth->setMute(type, m);
-        chInstMap[type]->setMuteButton(m);
+        if (InstCh *ic = chInstMap.value(type, nullptr))
+            ic->setMuteButton(m);
     }
 }
 
@@ -1178,7 +1198,8 @@ void SynthMixerDialog::setSolo(InstrumentType t, bool s)
         if (synth->instrument(type).bus != (static_cast<int>(t) - synth->HANDLE_MIDI_COUNT))
             continue;
         synth->setSolo(type, s);
-        chInstMap[type]->setSoloButton(s);
+        if (InstCh *ic = chInstMap.value(type, nullptr))
+            ic->setSoloButton(s);
     }
 }
 
@@ -1195,12 +1216,15 @@ void SynthMixerDialog::resetMixLevel(InstrumentType t)
 
 void SynthMixerDialog::showPeakVU(InstrumentType t, int bus,  int ch, int note, int velocity)
 {
-    chInstMap[t]->peak(velocity);
+    // value(), not operator[]: a strip that is not in the map would be inserted as nullptr and dereferenced
+    if (InstCh *ich = chInstMap.value(t, nullptr))
+        ich->peak(velocity);
     if (masterStrip)
         masterStrip->peak(qMin(127, int(velocity * player->effectiveGain())));
-    if(bus > -1) {
-        InstrumentType bType = static_cast<InstrumentType>(bus + synth->HANDLE_MIDI_COUNT);
-        chInstMap[bType]->peak(velocity);
+    if (bus > -1 && bus < synth->HANDLE_BUS_COUNT) {
+        InstrumentType bType = static_cast<InstrumentType>(bus + synth->HANDLE_BUS_START);
+        if (InstCh *bch = chInstMap.value(bType, nullptr))
+            bch->peak(velocity);
     }
 }
 
@@ -1721,8 +1745,9 @@ void SynthMixerDialog::scheduleAlign()
 
 void SynthMixerDialog::hideEvent(QHideEvent *event)
 {
-    disconnect(synth, SIGNAL(noteOnSended(InstrumentType,int,int,int,int)),
-            this, SLOT(showPeakVU(InstrumentType,int,int,int,int)));
+    if (!metersLive)        // a phone is watching the meters: the link stays (setRemoteActive)
+        disconnect(synth, SIGNAL(noteOnSended(InstrumentType,int,int,int,int)),
+                this, SLOT(showPeakVU(InstrumentType,int,int,int,int)));
 }
 
 // Left: page buttons (1-16 / 17-32 / 33-46 / all) and the phone-remote button.
@@ -1875,6 +1900,9 @@ void SynthMixerDialog::buildSidePanels()
             if (QMessageBox::question(this, tr("รีเซ็ตทั้งหมด"),
                     tr("คืนค่าเฟดเดอร์ Pan Reverb Mute Solo ของทุกช่องเป็นค่าเริ่มต้น?")) != QMessageBox::Yes)
                 return;
+            synth->setDrumSolo(false);          // the "โซโล่กลอง" switch is a solo as well
+            if (btnSoloDrums)
+                btnSoloDrums->setChecked(false);
             for (InstrumentType t : chInstMap.keys())
                 applyStrip(t, 50, 0, 0, false, false);
             applyMaster(50);
@@ -2349,7 +2377,10 @@ void SynthMixerDialog::byPassFX(InstrumentType type, int fxIndex, bool bypass)
 
 void SynthMixerDialog::showFxDialog(InstrumentType type, int fxIndex)
 {
-    openFxDialog(synth->instrument(type).FXs[fxIndex], chInstMap[type]->fullInstrumentName());
+    const QList<FX *> fxs = synth->instrument(type).FXs;
+    if (fxIndex < 0 || fxIndex >= fxs.count() || !chInstMap.value(type, nullptr))
+        return;
+    openFxDialog(fxs[fxIndex], chInstMap[type]->fullInstrumentName());
 }
 
 void SynthMixerDialog::openFxDialog(FX *fx, const QString &ownerName)
@@ -3031,4 +3062,152 @@ void SynthMixerDialog::resetLayout()
     logLayout(QStringLiteral("reset by user (menu)"));
     QTimer::singleShot(0, this, [this]() { alignMasterMute(); });
     QTimer::singleShot(150, this, [this]() { alignMasterMute(); });
+}
+
+// The strips in the order of their number (the Canthai strip right after Pipe, as on the screen).
+QList<InstrumentType> SynthMixerDialog::remoteStripOrder() const
+{
+    QList<InstrumentType> order;
+    for (auto it = chInstMap.constBegin(); it != chInstMap.constEnd(); ++it) {
+        if (!it.value() || it.key() == InstrumentType::Canthai)
+            continue;
+        order.append(it.key());
+        if (it.key() == InstrumentType::Pipe && chInstMap.value(InstrumentType::Canthai, nullptr))
+            order.append(InstrumentType::Canthai);
+    }
+    return order;
+}
+
+// Everything the phone page shows except the meters (those go separately and much more often: remoteMetersCsv). Short
+// keys on purpose: it is sent several times a second. The strips come in the order of remoteStripOrder().
+//   strips: i = strip number, n = short name, g = group (0 instruments, 1 drums / percussion, 2 VSTi, 3 buses,
+//   4 inputs: YouTube / Audio), v = fader level 0..100 (50 = 0 dB), m = mute, s = solo, l = used by the song now;
+//   master: v, m the same way, d = the "solo drums" switch. pre = the soundfont preset (page tab 0..10), pn = the names of
+//   those tabs, as the computer shows them.
+QByteArray SynthMixerDialog::remoteStateJson()
+{
+    QJsonArray strips;
+    for (InstrumentType t : remoteStripOrder()) {
+        InstCh *ich = chInstMap.value(t, nullptr);
+        if (!ich)
+            continue;
+        const int i = static_cast<int>(t);
+        int grp = 0;
+        if (i >= 26 && i <= 41)
+            grp = 1;
+        else if (i >= 42 && i <= 45)
+            grp = 2;
+        else if (isBusType(t))
+            grp = 3;
+
+        QJsonObject o;
+        o.insert(QStringLiteral("i"), i);
+        o.insert(QStringLiteral("n"), ich->instrumentName());
+        o.insert(QStringLiteral("g"), grp);
+        o.insert(QStringLiteral("v"), synth->volume(t));
+        o.insert(QStringLiteral("m"), synth->isMute(t) ? 1 : 0);
+        o.insert(QStringLiteral("s"), synth->isSolo(t) ? 1 : 0);
+        o.insert(QStringLiteral("l"), 1);
+        strips.append(o);
+    }
+
+    QJsonObject master;
+    master.insert(QStringLiteral("v"), masterStrip ? masterStrip->fader->level() : player->volume());
+    master.insert(QStringLiteral("m"), player->isMasterMute() ? 1 : 0);
+    master.insert(QStringLiteral("d"), synth->isDrumSolo() ? 1 : 0);
+
+    QJsonArray presetNames;
+    for (int i = 0; i <= 10; i++)
+        if (QAbstractButton *b = btnPresets.button(i))
+            presetNames.append(b->text());
+
+    QJsonObject root;
+    root.insert(QStringLiteral("strips"), strips);
+    root.insert(QStringLiteral("master"), master);
+    root.insert(QStringLiteral("pre"), synth->soundfontPresets());
+    root.insert(QStringLiteral("pn"), presetNames);
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+// The meter of every strip (0..127, the level the LED meter on screen shows at this moment: fast rise, slow fall) in the
+// same order as the strips of remoteStateJson(), then the master's: "12,0,127,...,40". Tiny on purpose - the phone asks for
+// it about 30 times a second so its meters move like the ones on the computer's screen.
+QByteArray SynthMixerDialog::remoteMetersCsv()
+{
+    QByteArray out;
+    for (InstrumentType t : remoteStripOrder()) {
+        InstCh *ich = chInstMap.value(t, nullptr);
+        if (!ich)
+            continue;                                   // (the same ones, in the same order, as remoteStateJson())
+        out += QByteArray::number(ich->vuBar() ? ich->vuBar()->level() : 0);
+        out += ',';
+    }
+    out += QByteArray::number((masterStrip && masterStrip->vu) ? masterStrip->vu->level() : 0);
+    return out;
+}
+
+// One change from the phone: k = vol / mute / solo (strip i, value v) or mvol / mmute (master, value v) or dsolo (the "solo
+// drums" switch, value v) or preset (soundfont preset v, as a click on its tab). The same paths as loading a mixer preset:
+// the strip's own control is set (no signal), then the synth - and for a bus the strips on it.
+void SynthMixerDialog::remoteSet(const QMap<QString, QString> &p)
+{
+    const QString k = p.value(QStringLiteral("k"));
+    bool ok = false;
+    const int v = p.value(QStringLiteral("v")).toInt(&ok);
+    if (!ok)
+        return;
+
+    if (k == QLatin1String("mvol")) {
+        if (masterStrip)
+            masterStrip->setLevel(qBound(0, v, FaderTaper::kMaxLevel));   // moving the master fader un-mutes, as by hand
+        return;
+    }
+    if (k == QLatin1String("mmute")) {
+        if (masterStrip && masterStrip->btnMute)
+            masterStrip->btnMute->setChecked(v != 0);
+        return;
+    }
+    if (k == QLatin1String("dsolo")) {
+        synth->setDrumSolo(v != 0);
+        if (btnSoloDrums)
+            btnSoloDrums->setChecked(v != 0);       // the button on the computer follows (setChecked sends no click)
+        return;
+    }
+    if (k == QLatin1String("preset")) {
+        if (btnPresets.button(v))                   // 0..10: the same as a click on that preset tab
+            changeSoundfontPresets(v);
+        return;
+    }
+
+    const InstrumentType t = static_cast<InstrumentType>(p.value(QStringLiteral("i"), QStringLiteral("-1")).toInt());
+    InstCh *ich = chInstMap.value(t, nullptr);
+    if (!ich)
+        return;
+    if (k == QLatin1String("vol")) {
+        const int lv = qBound(0, v, FaderTaper::kMaxLevel);
+        ich->setSliderLevel(lv);
+        setMixLevel(t, lv);
+    } else if (k == QLatin1String("mute")) {
+        ich->setMuteButton(v != 0);
+        setMute(t, v != 0);
+    } else if (k == QLatin1String("solo")) {
+        ich->setSoloButton(v != 0);
+        setSolo(t, v != 0);
+    }
+}
+
+// A hidden window has its note -> meter link cut (hideEvent) to save work. While a phone is connected the link is kept /
+// made again, so the phone sees moving meters although the mixer is behind the karaoke program or hidden.
+void SynthMixerDialog::setRemoteActive(bool on)
+{
+    if (metersLive == on)
+        return;
+    metersLive = on;
+    if (on) {
+        connect(synth, SIGNAL(noteOnSended(InstrumentType,int,int,int,int)),
+                this, SLOT(showPeakVU(InstrumentType,int,int,int,int)), Qt::UniqueConnection);
+    } else if (!isVisible()) {
+        disconnect(synth, SIGNAL(noteOnSended(InstrumentType,int,int,int,int)),
+                   this, SLOT(showPeakVU(InstrumentType,int,int,int,int)));
+    }
 }

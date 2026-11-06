@@ -110,6 +110,21 @@ inline void qtHandler(QtMsgType type, const QMessageLogContext &ctx, const QStri
 #ifdef _WIN32
 inline wchar_t *crashPath() { static wchar_t p[MAX_PATH * 2] = {0}; return p; }
 
+// "module.dll+0x1234" for a code address (which DLL / where in it), for the crash line
+inline int codeWhere(unsigned long long pc, char *out, int cap)
+{
+    HMODULE hm = nullptr;
+    wchar_t w[MAX_PATH] = {0};
+    if (pc && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                 reinterpret_cast<LPCWSTR>(pc), &hm) && hm && GetModuleFileNameW(hm, w, MAX_PATH)) {
+        const wchar_t *base = wcsrchr(w, L'\\');
+        char m[MAX_PATH] = "?";
+        WideCharToMultiByte(CP_UTF8, 0, base ? base + 1 : w, -1, m, MAX_PATH, nullptr, nullptr);
+        return _snprintf_s(out, size_t(cap), _TRUNCATE, "%s+0x%llx", m, pc - reinterpret_cast<unsigned long long>(hm));
+    }
+    return _snprintf_s(out, size_t(cap), _TRUNCATE, "0x%llx", pc);
+}
+
 inline LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
 {
     // no Qt in here: the program state is not trusted. Plain Win32 calls only.
@@ -128,11 +143,52 @@ inline LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
     const int n = _snprintf_s(line, sizeof(line), _TRUNCATE,
                               "%04d-%02d-%02d %02d:%02d:%02d  [CRASH] exception 0x%08lX at %p in %s\r\n",
                               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, code, addr, mod);
+    // second line: the call stack (which DLL called which), e.g. ucrtbase.dll (memcpy) < bassmidi.dll < KaraMixer.exe.
+    // "where it crashed" alone said only ucrtbase.dll, i.e. some memory copy - not whose.
+    char stack[1400];
+    int sn = _snprintf_s(stack, sizeof(stack), _TRUNCATE, "  stack:");
+#ifdef _WIN64
+    if (ep && ep->ContextRecord) {
+        CONTEXT c = *ep->ContextRecord;
+        const NT_TIB *tib = reinterpret_cast<const NT_TIB *>(NtCurrentTeb());
+        const unsigned long long lo = reinterpret_cast<unsigned long long>(tib->StackLimit),
+                                 hi = reinterpret_cast<unsigned long long>(tib->StackBase);
+        for (int i = 0; i < 14 && c.Rip && sn > 0 && sn < int(sizeof(stack)) - 80; i++) {
+            char one[160];
+            codeWhere(c.Rip, one, sizeof(one));
+            sn += _snprintf_s(stack + sn, sizeof(stack) - size_t(sn), _TRUNCATE, "%s %s", i ? " <" : "", one);
+            DWORD64 imageBase = 0;
+            PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c.Rip, &imageBase, nullptr);
+            if (!f) {                                    // leaf function: the return address is on top of the stack
+                if (c.Rsp < lo || c.Rsp + 8 > hi)
+                    break;
+                c.Rip = *reinterpret_cast<const DWORD64 *>(c.Rsp);
+                c.Rsp += 8;
+            } else {
+                void *hd = nullptr;
+                DWORD64 est = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, c.Rip, f, &c, &hd, &est, nullptr);
+            }
+            if (c.Rsp < lo || c.Rsp > hi)
+                break;
+        }
+    }
+#endif
+    if (ep && ep->ExceptionRecord && code == 0xC0000005 && ep->ExceptionRecord->NumberParameters >= 2)
+        sn += _snprintf_s(stack + (sn > 0 ? sn : 0), sizeof(stack) - size_t(sn > 0 ? sn : 0), _TRUNCATE, "   (%s 0x%llx)",
+                          ep->ExceptionRecord->ExceptionInformation[0] == 1 ? "writing" :
+                          (ep->ExceptionRecord->ExceptionInformation[0] == 8 ? "executing" : "reading"),
+                          static_cast<unsigned long long>(ep->ExceptionRecord->ExceptionInformation[1]));
+    if (sn > 0 && sn < int(sizeof(stack)) - 3)
+        sn += _snprintf_s(stack + sn, sizeof(stack) - size_t(sn), _TRUNCATE, "\r\n");
+
     HANDLE h = CreateFileW(crashPath(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
         DWORD w = 0;
         WriteFile(h, line, DWORD(n > 0 ? n : 0), &w, nullptr);
+        if (sn > 0)
+            WriteFile(h, stack, DWORD(sn), &w, nullptr);
         CloseHandle(h);
     }
     return EXCEPTION_CONTINUE_SEARCH;   // then Windows does what it always did (error window / report)

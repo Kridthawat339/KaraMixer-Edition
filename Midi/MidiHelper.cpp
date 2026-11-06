@@ -51,11 +51,13 @@ int MidiHelper::getNumberBeatInBar(int numerator, int denominator)
 QList<SignatureBeat> MidiHelper::calculateBeats(MidiFile *midi)
 {
     QList<SignatureBeat> beats;
-    uint32_t t = midi->events().back()->tick();
-    ushort bCount = midi->beatFromTick(t);
+    if (midi->events().isEmpty())
+        return beats;
 
     for (MidiEvent *evt : midi->timeSignatureEvents())
     {
+        if (evt->data().size() < 2)
+            continue;           // broken time signature event
         int nBeatInBar = getNumberBeatInBar(evt->data()[0], evt->data()[1]);
         if (nBeatInBar <= 0)
             continue;

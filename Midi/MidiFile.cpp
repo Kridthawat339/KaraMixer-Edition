@@ -10,23 +10,24 @@ bool isGreaterThan(MidiEvent* e1, MidiEvent* e2)
     return (e1->tick() < e2->tick());
 }
 quint16 readUInt16(QFile *in) {
-    unsigned char buffer[2];
+    unsigned char buffer[2] = { 0, 0 };   // short read (truncated file): 0, not stack garbage
     in->read((char*)&buffer, 2);
     return ((uint16_t)(buffer[0]) << 8) | (uint16_t)(buffer[1]);
 }
 
 quint32 readUInt32(QFile *in) {
-    unsigned char buffer[4];
+    unsigned char buffer[4] = { 0, 0, 0, 0 };
     in->read((char*)&buffer, 4);
     return ((uint32_t)(buffer[0]) << 24) | ((uint32_t)(buffer[1]) << 16) |
            ((uint32_t)(buffer[2]) << 8) | (uint32_t)(buffer[3]);
 }
 
 quint32 readVariableLengthQuantity(QFile *in) {
-    unsigned char b;
+    unsigned char b = 0;
     uint32_t value = 0;
     do {
-        in->getChar((char*)&b);
+        if (!in->getChar((char*)&b))
+            break;                      // end of a truncated file: b would be left uninitialised
         value = (value << 7) | (b & 0x7F);
     } while ((b & 0x80) == 0x80 && !in->atEnd());
 
@@ -107,7 +108,8 @@ bool MidiFile::read(QFile *in, bool seekFileChunkID)
     chunkSize = readUInt32(in);
     chunkStart = in->pos();
 
-    if (chunkSize != 6) {
+    // the header is 6 bytes; the standard lets it grow (newer fields are to be skipped), so only a short one is broken
+    if (chunkSize < 6) {
         in->close();
         return false;
     }
@@ -138,19 +140,35 @@ bool MidiFile::read(QFile *in, bool seekFileChunkID)
     default:
         fDivision = PPQ;
         fResolution = divResolution[1] | divResolution[0] << 8;
+        if (fResolution <= 0)
+            fResolution = 96;   // broken header: avoid dividing by zero in every tick <-> time conversion
         break;
     }
 
+    in->seek(chunkStart + chunkSize);       // past the header, also when it is longer than 6 bytes
+
     for (int t=0; t<fNumOfTracks; t++) {
 
-        in->read((char*)chunkID, 4);
+        if (in->read((char*)chunkID, 4) != 4)
+            break;                              // fewer tracks than the header says: keep the ones read
         chunkSize = readUInt32(in);
         chunkStart = in->pos();
 
         if (memcmp(chunkID, "MTrk", 4) != 0) {
-            clear();
-            in->close();
-            return false;
+            // an unknown chunk (e.g. Yamaha XF "XFIH" / "XFKM", RIFF data ...): the standard says skip it.
+            // Zero padding or a chunk running past the end of the file: no more tracks (keep the ones read; a file
+            // without any track is not a MIDI file)
+            if (chunkStart + chunkSize > in->size() || (chunkID[0] == 0 && chunkSize == 0)) {
+                if (t == 0) {
+                    clear();
+                    in->close();
+                    return false;
+                }
+                break;
+            }
+            in->seek(chunkStart + chunkSize);
+            t--;
+            continue;
         }
 
         uint32_t tick = 0, delta = 0;
@@ -161,13 +179,17 @@ bool MidiFile::read(QFile *in, bool seekFileChunkID)
 
             delta = readVariableLengthQuantity(in);
             tick += delta;
-            in->getChar((char*)&status);
+            status = 0;
+            if (!in->getChar((char*)&status))
+                break;
 
             if ((status & 0x80) == 0) {
+                if (runningStatus == 0)
+                    continue;           // data byte without any status before it: skip it
                 status = runningStatus;
                 in->seek(in->pos() - 1);
-            } else {
-                runningStatus = status;
+            } else if (status < 0xF0) {
+                runningStatus = status; // only channel messages set running status (not SysEx / meta)
             }
 
             switch (status & 0xF0) {
@@ -286,6 +308,12 @@ bool MidiFile::read(QFile *in, bool seekFileChunkID)
 
 MidiEvent *MidiFile::createMidiEvent(int track, uint32_t tick, uint32_t delta, MidiEventType evType, int ch, int data1, int data2)
 {
+    // data bytes are read as (signed) char: a broken file gave negative note / controller numbers, used later as
+    // array indexes (played-note tables, channel state). MIDI data bytes are 7-bit.
+    if (evType != MidiEventType::PitchBend) {
+        data1 &= 0x7F;
+        data2 &= 0x7F;
+    }
     MidiEvent *e = new MidiEvent();
     e->setTrack(track);
     e->setTick(tick);
@@ -452,13 +480,13 @@ uint32_t MidiFile::tickFromTimeMs(long msTime, int bpmSpeed)
         return tempo_event_tick + (uint32_t)((msTime - tempo_event_time) * (tempo / 60000) * fResolution);
     }
     case SMPTE24:
-        return (uint32_t)(msTime * fResolution * 24.0) * 1000;
+        return (uint32_t)(msTime / 1000.0 * fResolution * 24.0);
     case SMPTE25:
-        return (uint32_t)(msTime * fResolution * 25.0) * 1000;
+        return (uint32_t)(msTime / 1000.0 * fResolution * 25.0);
     case SMPTE30DROP:
-        return (uint32_t)(msTime * fResolution * 29.97) * 1000;
+        return (uint32_t)(msTime / 1000.0 * fResolution * 29.97);
     case SMPTE30:
-        return (uint32_t)(msTime * fResolution * 30.0) * 1000;
+        return (uint32_t)(msTime / 1000.0 * fResolution * 30.0);
     default:
         return 0;
     }
@@ -484,7 +512,7 @@ uint32_t MidiFile::tickFromBeat(float beat)
 
 uint32_t MidiFile::tickFromBar(int barNumber)
 {
-    uint32_t result = 0, lastBar = 0, lastBeat = 0, lastBeatInBar = 0;
+    uint32_t result = 0, lastBar = 0, lastBeat = 0, lastBeatInBar = 4;   // no time signature yet = 4/4
 
     for (const SignatureBeat &sigBeat : MidiHelper::calculateBeats(this)) {
         uint32_t nBar = lastBar + ((sigBeat.nBeat - lastBeat) / sigBeat.nBeatInBar);
@@ -529,8 +557,10 @@ int MidiFile::barFromTick(uint32_t tick)
 
 int MidiFile::barCount()
 {
+    if (fEvents.isEmpty())
+        return 0;
     int bCount = 0;
-    int lastBeat = 0, lastBeatInBar = 0, tempBeatCount = 0;
+    int lastBeat = 0, lastBeatInBar = 4, tempBeatCount = 0;   // no time signature = 4/4 (0 divided by zero: crash)
 
     for (SignatureBeat sigBeat : MidiHelper::calculateBeats(this)) {
         lastBeat = sigBeat.nBeat;
@@ -564,12 +594,17 @@ void MidiFile::insertEvent(int index, MidiEvent *event)
 
 MidiEvent *MidiFile::takeEvent(int index)
 {
+    if (index < 0 || index >= fEvents.size())
+        return nullptr;
     return fEvents.takeAt(index);
 }
 
 MidiEvent *MidiFile::takeEvent(MidiEvent *event)
 {
-    int i = fEvents.indexOf(event, fEvents.count() - 1);
+    // indexOf(event, count - 1) only looked at the very last element: -1 (-> takeAt(-1), crash) for any other one
+    const int i = fEvents.lastIndexOf(event);
+    if (i < 0)
+        return nullptr;
     return takeEvent(i);
 }
 
@@ -587,16 +622,17 @@ int MidiFile::firstBpm(const QString &file)
 int MidiFile::firstBpm(QFile *in)
 {
     if (!in->exists() || !in->open(QFile::ReadOnly))
-        return false;
+        return 0;
 
     uchar cId[4];
     in->read((char*)cId, 4);
 
-    int cSize = readUInt32(in);
-    if (cSize != 6) {
+    qint64 cSize = readUInt32(in);
+    if (memcmp(cId, "MThd", 4) != 0 || cSize < 6) {     // same checks as read(): a longer header is allowed
         in->close();
         return 0;
     }
+    const qint64 hdrEnd = in->pos() + cSize;
 
     int fType = readUInt16(in);
     int nTracks = readUInt16(in);
@@ -608,18 +644,27 @@ int MidiFile::firstBpm(QFile *in)
 
     unsigned char divResolution[2];
     in->read((char*)divResolution, 2);
+    in->seek(hdrEnd);
 
-    for (int i=0; i<nTracks; i++) {
-
-        in->read((char*)cId, 4);
+    // at least one track; unknown chunks (Yamaha XF ...) are skipped as read() does
+    int found = 0;
+    for (int i=0; i<nTracks && found < nTracks; i++) {
+        if (in->read((char*)cId, 4) != 4)
+            break;
         cSize = readUInt32(in);
-
-        if (memcmp(cId, "MTrk", 4) != 0) {
-            in->close();
-            return 0;
-        }
-
+        if (memcmp(cId, "MTrk", 4) == 0)
+            found++;                            // (a cut-off last track still counts: read() keeps what is there)
+        else if (in->pos() + cSize > in->size() || (cId[0] == 0 && cSize == 0))
+            break;
+        else
+            i--;
+        if (in->pos() + cSize >= in->size())
+            break;
         in->seek(in->pos() + cSize);
+    }
+    if (found == 0) {
+        in->close();
+        return 0;
     }
 
     // End check file
@@ -627,14 +672,15 @@ int MidiFile::firstBpm(QFile *in)
     in->seek(0);
 
     QByteArray buffer = in->readAll();
-    int index = buffer.indexOf(0xFF51, 0);
+    // Set Tempo meta event: FF 51 03 tt tt tt (QByteArray::indexOf(0xFF51) searched for the single byte 0x51 ('Q'))
+    int index = buffer.indexOf(QByteArray("\xFF\x51\x03", 3), 0);
 
     if (index == -1) {
         in->close();
         return 120;
     }
     else {
-        in->seek(index);
+        in->seek(index + 1);
         char metaNumber;//, lenght;
         in->getChar(&metaNumber);
         //in->getChar(&lenght);
@@ -652,6 +698,8 @@ int MidiFile::firstBpm(QFile *in)
 
         in->close();
 
+        if (midi_tempo <= 0)
+            return 120;
         return 60000000 / midi_tempo;
     }
 }

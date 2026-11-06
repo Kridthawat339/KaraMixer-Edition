@@ -49,6 +49,8 @@
 #include "Midi/MidiFile.h"
 #include "Midi/HNKFile.h"
 #include "Midi/AsioOutput.h"
+#include "Midi/DevicePicker.h"
+#include "Widgets/EventLog.h"
 #include "Dialogs/AboutDialog.h"
 #include "Dialogs/DiagnosticsDialog.h"
 #include "Widgets/KaraokeLauncher.h"
@@ -83,6 +85,12 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
 
+    // device names as UTF-8 (default: the ANSI code page, so Thai Windows' "ลำโพง (...)" was read as broken UTF-8 in
+    // every device list); must be set before the first BASS_GetDeviceInfo / BASS_RecordGetDeviceInfo
+    #ifdef _WIN32
+    BASS_SetConfig(BASS_CONFIG_UNICODE, TRUE);
+    #endif
+
     // List audio device and Init BASS
     {
         QMap<int, QString> dvs;
@@ -92,13 +100,13 @@ MainWindow::MainWindow(QWidget *parent) :
         {
             #ifdef __linux__
             if (info.flags&BASS_DEVICE_ENABLED && BASS_Init(a, 44100, BASS_DEVICE_SPEAKERS, NULL, NULL)) { // device is enabled
-                dvs[a] =  QString(info.name);
+                dvs[a] =  QString::fromUtf8(info.name);
                 count++; // count it
             }
             #else
             if (info.flags&BASS_DEVICE_ENABLED) { // device is enabled
                 BASS_Init(a, 44100, BASS_DEVICE_SPEAKERS, NULL, NULL);
-                dvs[a] =  QString(info.name);
+                dvs[a] =  QString::fromUtf8(info.name);
                 count++; // count it
             }
             #endif
@@ -136,9 +144,9 @@ MainWindow::MainWindow(QWidget *parent) :
     if (lang == "en")
         setEngLang();
 
-    QString ncn = settings->value("NCNPath", QDir::currentPath() + "/Songs/NCN").toString();
-    QString hnk = settings->value("HNKPath", QDir::currentPath() + "/Songs/HNK").toString();
-    QString kar = settings->value("KARPath", QDir::currentPath() + "/Songs/KAR").toString();
+    QString ncn = settings->value("NCNPath", QCoreApplication::applicationDirPath() + "/Songs/NCN").toString();
+    QString hnk = settings->value("HNKPath", QCoreApplication::applicationDirPath() + "/Songs/HNK").toString();
+    QString kar = settings->value("KARPath", QCoreApplication::applicationDirPath() + "/Songs/KAR").toString();
 
     db = new SongDatabase();
     db->setNcnPath(ncn);
@@ -221,15 +229,14 @@ MainWindow::MainWindow(QWidget *parent) :
         // (an external MIDI out such as "Microsoft GS Wavetable" lost the sf2).
         int oPort   = -1;
         settings->setValue("MidiOut", -1);
-        int iPort   = settings->value("MidiIn", -1).toInt();
-        // MIDI-in is remembered by device name, because port numbers shift
-        // depending on which program/virtual cable was started first.
-        QString inName = settings->value("MidiInName", "").toString();
-        if (!inName.isEmpty()) {
-            int idx = MidiPlayer::midiInDevices().indexOf(inName);
-            if (idx >= 0)
-                iPort = idx;
-        }
+        // MIDI-in is remembered by device name, because port numbers shift depending on which program /
+        // virtual cable was started first. The number is only used for configs from before the name was stored.
+        // A name this computer does not have (config made on another computer: "CopperLan" there, "loopMIDI"
+        // here) is resolved by the watcher below (DevicePicker): it used to open whatever device had the old
+        // number, and the watcher then closed it again, so the mixer stayed unconnected.
+        int iPort = -1;
+        if (settings->value("MidiInName", "").toString().isEmpty())
+            iPort = settings->value("MidiIn", -1).toInt();
         int vl      = settings->value("MidiVolume", 50).toInt();
         bool lDrum  = settings->value("MidiLockDrum", false).toBool();
         bool lSnare = settings->value("MidiLockSnare", false).toBool();
@@ -247,21 +254,12 @@ MainWindow::MainWindow(QWidget *parent) :
 
         // Auto (re)connect the MIDI-in device by name, so the mixer works no
         // matter whether the karaoke program / virtual MIDI cable starts first.
+        midiInStart.start();
         QTimer *midiInWatcher = new QTimer(this);
         midiInWatcher->setInterval(2000);
-        connect(midiInWatcher, &QTimer::timeout, this, [this]() {
-            QString name = settings->value("MidiInName", "").toString();
-            if (name.isEmpty())
-                return;
-            int idx = MidiPlayer::midiInDevices().indexOf(name);
-            if (idx < 0) {
-                if (player->midiInPortNumber() != -1)
-                    player->setMidiIn(-1);
-            } else if (idx != player->midiInPortNumber()) {
-                player->setMidiIn(idx);
-            }
-        });
+        connect(midiInWatcher, &QTimer::timeout, this, [this]() { resolveMidiIn(false); });
         midiInWatcher->start();
+        QTimer::singleShot(0, this, [this]() { resolveMidiIn(false); });
 
         if (lDrum) {
             int ldNum = settings->value("MidiLockDrumNumber", 0).toInt();
@@ -306,16 +304,18 @@ MainWindow::MainWindow(QWidget *parent) :
         MidiSynthesizer *synth = player->midiSynthesizer();
 
         // Audio out
-        int aout = settings->value("SynthDefaultDevice", 1).toInt();
+        // (sound card / ASIO driver are stored by number with the name next to it: on another computer the
+        //  number can be another card, so the name decides - DevicePicker)
+        int aout = resolveAudioDevice(settings);
         synth->setDefaultDevice(aout);
 
         // ASIO output (optional, -1 = normal Windows device)
-        int asio = settings->value("AsioDevice", -1).toInt();
+        int asio = resolveAsioDevice(settings);
         if (asio >= AsioOutput::devices().count())
             asio = -1;
         if (AsioOutput::crashedLastStart()) {          // the driver hung / crashed the last time: start on the normal device
             asio = -1;
-            settings->setValue("AsioDevice", -1);
+            DevicePicker::saveAsioDevice(settings, -1, AsioOutput::devices());
         }
         AsioOutput::setPairMask(settings->value("AsioPairMask", 1).toUInt());
         AsioOutput::setSpeakerSplit(settings->value("AsioSpeakerSplit", false).toBool());
@@ -509,12 +509,13 @@ MainWindow::~MainWindow()
         settings->setValue("WindowHeight", this->height());
     }
 
-    foreach (Song *s, playlist) {
-        delete s;
-    }
-
+    // the medley loader thread reads a Song of the playlist: let it finish before the songs are deleted
     if (medleyLoader != nullptr) {
         medleyLoader->wait();
+    }
+
+    foreach (Song *s, playlist) {
+        delete s;
     }
 
     delete player;
@@ -545,8 +546,10 @@ MainWindow::~MainWindow()
 void MainWindow::play(int index, int position)
 {
     if (player->isUseMedley() && player->isPlayerPlaying()) {
-        loadNextMedley(playlist[index]);
-        connect(medleyLoader, &MedleyLoader::finished, [this, index](){
+        if (index < 0 || index >= playlist.size())
+            return;
+        // connected before the thread starts (it could finish before a later connect) and run in the GUI thread
+        loadNextMedley(playlist[index], [this, index]() {
             MidiSequencer *seq = player->midiSequencer();
             seq->setEndTick(seq->midiFile()->tickFromBar(seq->currentBar() + 1));
             playingIndex = index - 1;
@@ -585,6 +588,9 @@ void MainWindow::play(int index, int position)
         lyricsTimer->start();
         return;
     }
+
+    if (index < 0 || index >= playlist.size())   // nothing played yet (-1) / stale row: playlist[index] crashed
+        return;
 
     Song *s = playlist[index];
     playingSong = *s;
@@ -866,15 +872,18 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         }
         case Qt::Key_Enter:
         case Qt::Key_Return: {
-            Song *s = playlist[ui->playlistWidget->currentRow()];
+            const int row = ui->playlistWidget->currentRow();
+            if (row < 0 || row >= playlist.size())
+                break;
+            Song *s = playlist[row];
             s->setCutStartBar(ui->songMedley->cutStartBar());
             s->setCutEndBar(ui->songMedley->cutEndBar());
             this->setFocus();
             ui->songMedley->hide();
             timer2->start(playlist_timeout);
 
-            if (ui->playlistWidget->currentRow() == playingIndex + 1) {
-                MidiSequencer *seq = player->midiSequencerTemp();
+            MidiSequencer *seq = player->midiSequencerTemp();   // nullptr while no next medley song is loaded
+            if (seq && ui->playlistWidget->currentRow() == playingIndex + 1) {
                 seq->setCutStartBar(s->cutStartBar());
                 seq->setCutEndBar(s->cutEndBar());
             }
@@ -1297,6 +1306,10 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     case Qt::Key_Return:
         if (ui->frameSearch->isVisible()) {
             Song *s = db->currentSong();
+            if (!s || s->path().isEmpty()) {        // nothing found: nothing to add
+                timer2->start(search_timeout);
+                break;
+            }
             addToPlaylist(s);
 
             if (auto_playnext && playlist.count() == 1 && player->isPlayerStopped()) {
@@ -1305,7 +1318,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
                 hideUIFrame();
             }
         }
-        if (ui->playlistWidget->isVisible() && ui->playlistWidget->rowCount() > 0) {
+        if (ui->playlistWidget->isVisible() && ui->playlistWidget->rowCount() > 0
+                && ui->playlistWidget->currentRow() >= 0) {
             ui->playlistWidget->hide();
             play(ui->playlistWidget->currentRow());
         }
@@ -1313,7 +1327,10 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     case Qt::Key_Space:
         if (player->isUseMedley() && ui->playlistWidget->isVisible()) {
             timer2->stop();
-            Song *s = playlist[ui->playlistWidget->currentRow()];
+            const int row = ui->playlistWidget->currentRow();
+            if (row < 0 || row >= playlist.size())
+                break;
+            Song *s = playlist[row];
             ui->songMedley->setup(s->cutStartBar(), s->cutEndBar());
             ui->songMedley->show();
             break;
@@ -1324,26 +1341,29 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
             timer2->start(songDetail_timeout);
             break;
         }
+        // fall through: the search box is open, the space is typed into it (search and playlist are never shown together)
     case Qt::Key_Plus:
         if (ui->playlistWidget->isVisible()) {
             int i = ui->playlistWidget->currentRow();
-            if (i >= ui->playlistWidget->rowCount() -1)
+            if (i < 0 || i >= ui->playlistWidget->rowCount() -1)
                 break;
 
             swapInPlaylist(i, i+1);
             timer2->start(playlist_timeout);
             break;
         }
+        // fall through: no playlist on screen, "+" is typed into the search
     case Qt::Key_Minus:
         if (ui->playlistWidget->isVisible()) {
             int i = ui->playlistWidget->currentRow();
-            if (i == 0)
+            if (i <= 0)
                 break;
 
             swapInPlaylist(i, i-1);
             timer2->start(playlist_timeout);
             break;
         }
+        // fall through
     default:
         if (searchBoxChangeBpm) {
             ui->lbSearch->setText("_");
@@ -1375,17 +1395,23 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
     }
 }
 
-void MainWindow::loadNextMedley(Song *song)
+void MainWindow::loadNextMedley(Song *song, std::function<void()> onLoaded)
 {
     if ((medleyLoader != nullptr) && medleyLoader->isRunning())
         medleyLoader->wait();
 
-    medleyLoader = new MedleyLoader(this, song, db, player, lyrWidget, secondLyr);
-    connect(medleyLoader, &MedleyLoader::finished, [this](){
-        medleyLoader->deleteLater();
-        medleyLoader = nullptr;
+    MedleyLoader *loader = new MedleyLoader(this, song, db, player, lyrWidget, secondLyr);
+    medleyLoader = loader;
+    // `this` as context: run in the GUI thread (without it the lambda ran in the loader's own thread), and only
+    // clear the pointer if it is still this loader (a newer one may have been started meanwhile)
+    connect(loader, &MedleyLoader::finished, this, [this, loader, onLoaded]() {
+        if (medleyLoader == loader)
+            medleyLoader = nullptr;
+        loader->deleteLater();
+        if (onLoaded)
+            onLoaded();
     });
-    medleyLoader->start();
+    loader->start();
 }
 
 void MainWindow::addToPlaylist(Song *song)
@@ -1408,8 +1434,15 @@ void MainWindow::addToPlaylist(Song *song)
 
 void MainWindow::removeFromPlaylist(int index)
 {
+    if (index < 0 || index >= playlist.size())
+        return;
+    // the medley loader thread may be reading this very Song right now: let it finish before the Song is deleted
+    if (medleyLoader != nullptr && medleyLoader->isRunning())
+        medleyLoader->wait();
     delete playlist.takeAt(index);
     ui->playlistWidget->removeRow(index);
+    if (index < playingIndex)
+        playingIndex--;     // the songs after it moved up one place: "next" must still be the song after the playing one
 
     if (playlist.size() == 0)
         player->unloadNextMedley();
@@ -1420,7 +1453,13 @@ void MainWindow::removeFromPlaylist(int index)
 
 void MainWindow::swapInPlaylist(int index, int toIndex)
 {
+    if (index < 0 || toIndex < 0 || index >= playlist.size() || toIndex >= playlist.size())
+        return;
     playlist.swap(index, toIndex);
+    if (playingIndex == index)          // the playing song moved: follow it
+        playingIndex = toIndex;
+    else if (playingIndex == toIndex)
+        playingIndex = index;
     ui->playlistWidget->swapRow(index, toIndex);
     ui->playlistWidget->setCurrentRow(toIndex);
 
@@ -1523,6 +1562,17 @@ void MainWindow::showCurrentTime()
 
 void MainWindow::setFrameSearch(Song *s)
 {
+    if (s->id().isEmpty() && s->name().isEmpty()) {     // the search found nothing
+        ui->lbId->setText(QString());
+        ui->lbName->setText(QString::fromUtf8(" ไม่พบเพลงที่ค้นหา"));
+        ui->lbBtw->hide();
+        ui->lbArtist->setText(QString());
+        ui->lbTempoKey->setText(QString());
+        ui->lbType->setText(QString());
+        ui->lbLyrics->setText(QString());
+        return;
+    }
+    ui->lbBtw->show();
     ui->lbId->setText(s->id());
     ui->lbName->setText(" " + s->name());
     ui->lbBtw->setText("-");
@@ -1690,8 +1740,13 @@ void MainWindow::openConfigFile()
     // the files on disk are the new config: apply it to the running program (the music keeps playing)
     skipSaveOnExit = false;
     synthMix->setSkipSave(false);
+    midiInImportNote.clear();
     applyConfigLive();
-    QToolTip::showText(QCursor::pos(), tr("โหลดคอนฟิกเรียบร้อยแล้ว (ไม่ต้องรีสตาร์ท)"), synthMix, QRect(), 4000);
+    // one message for both: a second tooltip would replace the MIDI-in notice at once
+    QToolTip::showText(QCursor::pos(), tr("โหลดคอนฟิกเรียบร้อยแล้ว (ไม่ต้องรีสตาร์ท)")
+                       + (midiInImportNote.isEmpty() ? QString() : "
+" + midiInImportNote),
+                       synthMix, QRect(), midiInImportNote.isEmpty() ? 4000 : 8000);
 }
 
 void MainWindow::applyConfigLive()
@@ -1712,8 +1767,8 @@ void MainWindow::applyConfigLive()
         synth->setSincInterpolation(false);
         synth->setReverbStrong(app.value("ReverbStrong", false).toBool());
 
-        int aout = app.value("SynthDefaultDevice", 1).toInt();
-        int asio = app.value("AsioDevice", -1).toInt();
+        int aout = resolveAudioDevice(settings);    // by name: the config may come from another computer
+        int asio = resolveAsioDevice(settings);
         if (asio >= AsioOutput::devices().count())
             asio = -1;
         if (asio != synth->asioDevice())
@@ -1806,11 +1861,107 @@ void MainWindow::applyConfigLive()
         lock("MidiLockBass",  "MidiLockBassNumber",  32, &MidiPlayer::setLockBass);
     }
 
+    // ---- 4b. MIDI-in: the config may name the virtual cable of another computer (CopperLan there, loopMIDI
+    //          here). Keep / find this computer's own device instead of disconnecting.
+    resolveMidiIn(true);
+
     // ---- 5. the mixer: strips, effects, routing, master volume ...
     synthMix->reloadFromSettings();
 
     ui->sliderVolume->setValue(player->volume());
     synthMix->setSkipSave(false);
+}
+
+// MIDI-in for the name in the config, on this computer (called every 2 s and after a config is loaded).
+void MainWindow::resolveMidiIn(bool afterImport)
+{
+    const QString saved = settings->value("MidiInName", "").toString();
+    if (saved.isEmpty())
+        return;                     // "None", or an old config that stores only the port number
+
+    const QStringList list = MidiPlayer::midiInDevices();
+    // a virtual cable is only guessed after a few seconds (the cable may start together with the karaoke program)
+    const bool mayGuess = afterImport || midiInStart.elapsed() > 8000;
+    const QString pick = DevicePicker::pickMidiIn(saved, list, mayGuess);
+    const int idx = pick.isEmpty() ? -1 : list.indexOf(pick);
+
+    // what happened goes to events.log (once per change, the watcher runs every 2 s) and, after a config is
+    // loaded, into the "config loaded" message (openConfigFile shows midiInImportNote)
+    auto note = [&](const QString &state, const QString &logText, const QString &userText, bool popup) {
+        if (state != midiInLogState) {
+            midiInLogState = state;
+            EventLog::add(QStringLiteral("MIDIIN"), logText);
+            if (popup && !afterImport && synthMix)
+                QToolTip::showText(QCursor::pos(), userText, synthMix, QRect(), 8000);
+        }
+        if (afterImport)
+            midiInImportNote = userText;
+    };
+
+    if (idx < 0) {
+        if (player->midiInPortNumber() != -1)
+            player->setMidiIn(-1);
+        if (mayGuess)
+            note("missing:" + saved,
+                 QStringLiteral("\"%1\" not found, no other MIDI cable to use (MIDI-in devices: %2)")
+                     .arg(saved, list.isEmpty() ? QStringLiteral("none") : list.join(QStringLiteral(", "))),
+                 tr("MIDI-in: ไม่พบ \"%1\" ในเครื่องนี้ และไม่พบ MIDI cable ตัวอื่น\n"
+                    "เปิดโปรแกรม MIDI cable (เช่น loopMIDI) หรือเลือกเองที่ ตั้งค่า > MIDI In").arg(saved), true);
+        return;
+    }
+    if (idx != player->midiInPortNumber() && !player->setMidiIn(idx)) {
+        note("busy:" + pick, QStringLiteral("cannot open \"%1\" (busy / in use by another program)").arg(pick),
+             tr("MIDI-in: เปิด \"%1\" ไม่ได้ (อาจถูกโปรแกรมอื่นใช้อยู่) - จะลองใหม่อัตโนมัติ").arg(pick), true);
+        return;                     // try again on the next round
+    }
+    if (pick == saved)
+        note("open:" + pick, QStringLiteral("connected \"%1\"").arg(pick),
+             tr("MIDI-in: %1").arg(pick), false);
+    else
+        note("open:" + pick, QStringLiteral("\"%1\" not found: using \"%2\" instead").arg(saved, pick),
+             tr("MIDI-in: ใช้ \"%1\" แทน \"%2\"\n(ไม่พบอุปกรณ์ในคอนฟิกในเครื่องนี้ - เลือกให้อัตโนมัติ)").arg(pick, saved), true);
+
+    if (pick != midiInLocal) {      // remember what THIS computer uses (not exported with the config)
+        midiInLocal = pick;
+        DevicePicker::setLocalValue("MidiInName", pick);
+    }
+}
+
+// Sound card number for this computer. The config stores the number and (from 4.0.2-Rev6) the name.
+int MainWindow::resolveAudioDevice(QSettings *st)
+{
+    const QStringList devs = MidiSynthesizer::audioDevices();
+    const int idx = st->value("SynthDefaultDevice", 1).toInt();
+    const QString name = st->value("SynthDefaultDeviceName", "").toString();
+    if (name.isEmpty()) {           // older config: learn the name of the card it points at on this computer
+        if (idx >= 1 && idx < devs.count())
+            DevicePicker::saveAudioDevice(st, idx, devs);
+        return idx;
+    }
+    bool learnt = false;
+    const int dv = DevicePicker::resolveByName(idx, name, devs, 1, &learnt);
+    if (learnt)
+        st->setValue("SynthDefaultDevice", dv);   // same card, other number on this computer
+    return dv;                      // card not here: the first (default) one, the config keeps its choice
+}
+
+int MainWindow::resolveAsioDevice(QSettings *st)
+{
+    const QStringList drv = AsioOutput::devices();
+    const int idx = st->value("AsioDevice", -1).toInt();
+    if (idx < 0)
+        return -1;
+    const QString name = st->value("AsioDeviceName", "").toString();
+    if (name.isEmpty()) {
+        if (idx < drv.count())
+            DevicePicker::saveAsioDevice(st, idx, drv);
+        return idx;
+    }
+    bool learnt = false;
+    const int a = DevicePicker::resolveByName(idx, name, drv, -1, &learnt);
+    if (learnt)
+        st->setValue("AsioDevice", a);
+    return a;                       // driver not installed here: the normal output device
 }
 
 void MainWindow::setMixerAutoHide(bool on, double delaySec, const QString &program)
@@ -1926,13 +2077,24 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
         act = menu.addAction(MenuIcons::make(MenuIcons::Phone), tr("ควบคุมผ่านมือถือ (QR Code)..."));
         connect(act, SIGNAL(triggered()), this, SLOT(showRemoteDialog()));
 
+        act = menu.addAction(tr("เปิดการควบคุมผ่านมือถืออัตโนมัติเมื่อเปิดโปรแกรม"));
+        act->setToolTip(tr("ติ๊ก: เปิดโปรแกรมแล้วระบบควบคุมผ่านมือถือเริ่มเอง ใช้ลิงก์/QR เดิมในมือถือได้ทันที ไม่ต้องไปกดที่เครื่องบนเวที "
+                           "(ปิดโปรแกรมแล้วเปิดใหม่ ลิงก์เดิมยังใช้ได้ ถ้าไม่กดสร้างรหัสใหม่)"));
+        act->setCheckable(true);
+        act->setChecked(RemoteServer::autoStartEnabled());
+        connect(act, &QAction::toggled, this, [this](bool on) {
+            RemoteServer::setAutoStartEnabled(on);
+            if (on && !(remoteServer && remoteServer->isRunning()))
+                startRemoteAtLaunch();      // switched on: start it now as well
+        });
+
         menu.addSeparator();
 
         // effect pictograms: neon green when the effect is on, dimmed when off
         auto fxIcon = [](MenuIcons::Kind k, bool on) {
             return MenuIcons::make(k, on ? MenuIcons::onColor() : MenuIcons::dimColor());
         };
-        actionShowEqDlg.setIcon(fxIcon(MenuIcons::Eq, syn->equalizer31BandFXs()[0]->isOn()));
+        actionShowEqDlg.setIcon(fxIcon(MenuIcons::Eq, !syn->equalizer31BandFXs().isEmpty() && syn->equalizer31BandFXs()[0]->isOn()));
         actionShowChorusDlg.setIcon(fxIcon(MenuIcons::Chorus, syn->chorusFXs()[0]->isOn()));
         actionShowReverbDlg.setIcon(fxIcon(MenuIcons::Reverb, syn->reverbFXs()[0]->isOn()));
         menu.addAction(&actionShowEqDlg);
@@ -1993,12 +2155,16 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
     { // theme menu
         QMenu *m = menu.addMenu(MenuIcons::make(MenuIcons::Theme), tr("ธีม / Theme"));
         QActionGroup *grp = new QActionGroup(m);
-        QAction *aSys   = m->addAction(tr("ตามธีม Windows"));
+        QAction *aSys   = m->addAction(tr("ตามธีม Windows (สี + สว่าง/มืด)"));
         QAction *aDark  = m->addAction(tr("มืด (Dark)"));
         QAction *aLight = m->addAction(tr("สว่าง (Light)"));
         QAction *aOrange = m->addAction(tr("ดาร์กส้ม (Dark Orange)"));
+        m->addSeparator();
+        QAction *aConL = m->addAction(tr("เทาอ่อน (Light Gray)"));
+        QAction *aConD = m->addAction(tr("เทาเข้ม (Dark Gray)"));
+        QAction *aConO = m->addAction(tr("เทาเข้ม-ส้ม (Gray Orange)"));
         QList<QAction*> acts;
-        acts << aSys << aDark << aLight << aOrange;
+        acts << aSys << aDark << aLight << aOrange << aConL << aConD << aConO;
         for (int i = 0; i < acts.count(); i++) {
             acts[i]->setCheckable(true);
             grp->addAction(acts[i]);
@@ -2007,16 +2173,21 @@ void MainWindow::showContextMenuAt(const QPoint &globalPos)
         aDark->setChecked(Theme::mode() == Theme::Dark);
         aLight->setChecked(Theme::mode() == Theme::Light);
         aOrange->setChecked(Theme::mode() == Theme::DarkOrange);
+        aConL->setChecked(Theme::mode() == Theme::ConsoleLight);
+        aConD->setChecked(Theme::mode() == Theme::ConsoleDark);
+        aConO->setChecked(Theme::mode() == Theme::ConsoleOrange);
         connect(aSys,   &QAction::triggered, this, []() { Theme::setMode(Theme::System); });
         connect(aDark,  &QAction::triggered, this, []() { Theme::setMode(Theme::Dark); });
         connect(aLight, &QAction::triggered, this, []() { Theme::setMode(Theme::Light); });
         connect(aOrange, &QAction::triggered, this, []() { Theme::setMode(Theme::DarkOrange); });
+        connect(aConL, &QAction::triggered, this, []() { Theme::setMode(Theme::ConsoleLight); });
+        connect(aConD, &QAction::triggered, this, []() { Theme::setMode(Theme::ConsoleDark); });
+        connect(aConO, &QAction::triggered, this, []() { Theme::setMode(Theme::ConsoleOrange); });
 
         menu.addSeparator();
     }
 
     menu.addAction(&actionAbout);
-    menu.addAction(&actionAboutQt);
     menu.addAction(&actionExit);
 
     // The menu closes by itself when the mouse leaves it (sub-menus count as part of it)
@@ -2093,6 +2264,59 @@ void MainWindow::showSettingsDialog()
     d.exec();
 }
 
+RemoteServer *MainWindow::ensureRemote()
+{
+    if (!remoteServer)
+    {
+        RemoteServer *srv = new RemoteServer(synthMix, this, this);
+        remoteServer = srv;
+        // (the lambdas below hold the mixer in a QPointer: when the program closes, the server is deleted after the
+        // mixer, and it still emits clientsChanged() while it stops)
+        QPointer<SynthMixerDialog> mix(synthMix);
+
+        // the phone's mixer page works through the mixer window's own controls (fader / mute / solo), so nothing opens
+        // on the computer's screen
+        srv->setMixerApi([mix]() { return mix ? mix->remoteStateJson() : QByteArray(); },
+                         [mix](const QMap<QString, QString> &p) { if (mix) mix->remoteSet(p); },
+                         [mix]() { return mix ? mix->remoteMetersCsv() : QByteArray(); });
+
+        // while a phone is connected the mixer keeps its meters running even when it is hidden (auto-hide, minimised)
+        connect(srv, &RemoteServer::clientsChanged, this, [srv, mix]() {
+            if (mix)
+                mix->setRemoteActive(srv->clientCount() > 0);
+        });
+    }
+    return remoteServer;
+}
+
+void MainWindow::startRemoteAtLaunch()
+{
+    if (!RemoteServer::autoStartEnabled())
+        return;
+
+    RemoteServer *srv = ensureRemote();
+    if (srv->startAuto())
+        return;
+
+    // no network yet (Windows has just started, Wi-Fi still connecting): try again every 5 s until it works, or until
+    // the tick is taken off, or the phone control was started by hand meanwhile
+    if (!remoteRetry)
+    {
+        remoteRetry = new QTimer(this);
+        remoteRetry->setInterval(5000);
+        connect(remoteRetry, &QTimer::timeout, this, [this]() {
+            if (!RemoteServer::autoStartEnabled() || (remoteServer && remoteServer->isRunning()))
+            {
+                remoteRetry->stop();
+                return;
+            }
+            if (ensureRemote()->startAuto())
+                remoteRetry->stop();
+        });
+    }
+    remoteRetry->start();
+}
+
 void MainWindow::showRemoteDialog()
 {
     if (remoteDialog)
@@ -2102,10 +2326,7 @@ void MainWindow::showRemoteDialog()
         return;
     }
 
-    if (!remoteServer)
-        remoteServer = new RemoteServer(synthMix, this, this);
-
-    RemoteDialog *dlg = new RemoteDialog(remoteServer, dialogParent());
+    RemoteDialog *dlg = new RemoteDialog(ensureRemote(), dialogParent());
     dlg->adjustSize();
     dlg->setFixedSize(dlg->size());
     dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -2408,6 +2629,8 @@ void MainWindow::switchMedleyLyrics2()
 void MainWindow::onNextMedleyStarted()
 {
     int index = playingIndex + 1;
+    if (index < 0 || index >= playlist.size())   // the next song was taken off the list meanwhile
+        return;
 
     playingSong = *playlist[index];
 
@@ -2447,7 +2670,7 @@ void MainWindow::onNextMedleyStarted()
 
 void MainWindow::onNextMedleyAfterStarted()
 {
-    if (playlist.size() > 0)
+    if (playingIndex + 1 >= 0 && playingIndex + 1 < playlist.size())   // (index past the end: the last song is playing)
         loadNextMedley(playlist[playingIndex + 1]);
 }
 
@@ -2460,7 +2683,8 @@ void MainWindow::onPlayerThreadFinished()
 
 void MainWindow::onDbUpdateChanged(int v)
 {
-    int p = (100 * v / db->updateCount());
+    const int total = db->updateCount();
+    int p = total > 0 ? (100 * v / total) : 0;
     if (p < 0) p = 0;
     updateDetail->setValue(QString::number(p) + "%");
 }
@@ -2620,6 +2844,8 @@ void MainWindow::loadPlaylist()
     QList<Song*> songs;
     if (Utils::loadPlaylist(fileName, songs))
     {
+        if (medleyLoader != nullptr && medleyLoader->isRunning())
+            medleyLoader->wait();   // it may be reading one of the songs deleted below
         for (Song *s : playlist)
             delete s;
         playlist.clear();

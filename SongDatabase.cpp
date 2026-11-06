@@ -437,13 +437,19 @@ Song *SongDatabase::search(const QString &s)
         query.bindValue(0, s + "%");
     }
 
+    bool found = false;
     if (query.exec()) {
         if (query.next()) {
             setSong(song, &query);
+            found = true;
         }
     }
     query.finish();
     query.clear();
+
+    // nothing matches: an empty result, not the song of the previous search (Enter added that one to the playlist)
+    if (!found)
+        *song = Song();
 
     return song;
 }

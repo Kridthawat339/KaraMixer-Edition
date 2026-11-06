@@ -109,13 +109,15 @@ inline bool launch(QWidget *parent, bool askIfMissing = true)
 
 #ifdef _WIN32
 namespace detail {
-struct CloseCtx { DWORD pid; int sent; };
+struct CloseCtx { DWORD pid; int sent; bool hiddenToo; };
 inline BOOL CALLBACK closeEnum(HWND h, LPARAM lp)
 {
     CloseCtx *c = reinterpret_cast<CloseCtx *>(lp);
     DWORD pid = 0;
     GetWindowThreadProcessId(h, &pid);
-    if (pid == c->pid && IsWindowVisible(h) && GetWindow(h, GW_OWNER) == nullptr) {   // top-level program windows only
+    // top-level program windows only; the second pass also takes hidden ones (a program sitting in the tray / with its
+    // main window hidden has no visible window: the request reached nothing and the program kept running)
+    if (pid == c->pid && (c->hiddenToo || IsWindowVisible(h)) && GetWindow(h, GW_OWNER) == nullptr) {
         PostMessageW(h, WM_CLOSE, 0, 0);
         c->sent++;
     }
@@ -156,8 +158,12 @@ inline void closeProgram()
             const bool got = QueryFullProcessImageNameW(h, 0, buf, &n) != FALSE;
             CloseHandle(h);
             if (got && QString::fromWCharArray(buf, int(n)).compare(target, Qt::CaseInsensitive) == 0) {
-                detail::CloseCtx c{ pe.th32ProcessID, 0 };
+                detail::CloseCtx c{ pe.th32ProcessID, 0, false };
                 EnumWindows(detail::closeEnum, reinterpret_cast<LPARAM>(&c));
+                if (c.sent == 0) {
+                    c.hiddenToo = true;
+                    EnumWindows(detail::closeEnum, reinterpret_cast<LPARAM>(&c));
+                }
                 sent += c.sent;
             }
         } while (Process32NextW(snap, &pe));

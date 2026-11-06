@@ -141,6 +141,9 @@ HEADERS  += Widgets/PanKnob.h \
     Widgets/FaderSlider.h \
     Widgets/TitleBar.h \
     Widgets/DialogSkin.h \
+    Widgets/KmStyle.h \
+    Widgets/PopupLifter.h \
+    Midi/DevicePicker.h \
     Widgets/ParamGlide.h \
     Widgets/MenuIcons.h \
     Widgets/VSTLabel.h \

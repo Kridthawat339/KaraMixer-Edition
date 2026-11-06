@@ -31,7 +31,7 @@ VSTDirsDialog::VSTDirsDialog(QWidget *parent, MainWindow *mainWindow) :
         QStringList dirs = st.value("VSTDirs", QStringList()).toStringList();
 
         QStringList vstDirs;
-        vstDirs << QDir::currentPath() + "/VST";
+        vstDirs << QCoreApplication::applicationDirPath() + "/VST";
         vstDirs += dirs;
 
         ui->list->addItems(vstDirs);
@@ -66,15 +66,26 @@ VSTDirsDialog::VSTDirsDialog(QWidget *parent, MainWindow *mainWindow) :
                   << chInstMap.value(InstrumentType::VSTi3)->fullInstrumentName()
                   << chInstMap.value(InstrumentType::VSTi4)->fullInstrumentName();
 
+        // the rows follow the instrument strips of the mixer, left to right: the melodic strips with the Canthai
+        // (khaen) strip right after Pipe, then the drum strips. Each row keeps its strip's type (row != type).
+        QList<InstrumentType> order;
+        for (int k = 0; k < static_cast<int>(InstrumentType::VSTi1); k++) {
+            const InstrumentType t = static_cast<InstrumentType>(k);
+            order << t;
+            if (t == InstrumentType::Pipe)
+                order << InstrumentType::Canthai;
+        }
+
         int i = 0;
-        for (InstrumentType t : chInstMap.keys())
+        for (InstrumentType t : order)
         {
-            if (t >= InstrumentType::VSTi1)
-                break;
+            if (!chInstMap.contains(t) || chInstMap.value(t) == nullptr)
+                continue;
 
             QString vName = vstiNames[synth->useVSTi(t) + 1];
 
             QTableWidgetItem *nameItem = new QTableWidgetItem(chInstMap.value(t)->fullInstrumentName());
+            nameItem->setData(Qt::UserRole, static_cast<int>(t));
             QTableWidgetItem *vstiItem = new QTableWidgetItem(vName);
 
             ui->tableVSTiUsed->insertRow(i);
@@ -137,7 +148,8 @@ void VSTDirsDialog::on_btnAdd_clicked()
 
 void VSTDirsDialog::on_btnRemove_clicked()
 {
-    if (ui->list->count() == 1)
+    // row 0 is the program's own VST folder (never saved / removed): nothing selected (-1) or that row = nothing to do
+    if (ui->list->count() == 1 || ui->list->currentRow() <= 0)
         return;
 
     QListWidgetItem *item = ui->list->takeItem(ui->list->currentRow());
@@ -230,7 +242,7 @@ bool VSTDirsDialog::setVSTiFile(int vstiIndex, QLineEdit *le, QLabel *lbName, QL
 {
     #ifdef _WIN32
     QString filter = tr("VST file (*.dll *.DLL *.vst3 *.VST3)");
-    #elif
+    #else   // (was a bare "#elif": an error for any compiler that evaluates it)
     QString filter = tr("VST file (*.vst *.VST)");
     #endif
 
@@ -463,10 +475,14 @@ void VSTDirsDialog::setVSTiUsed(int selected)
     QModelIndexList indexList = selectedVstiRows();
     for (QModelIndex index : indexList)
     {
+        const int typeNo = vstiRowType(index.row());
+        if (typeNo < 0)
+            continue;
         QTableWidgetItem *item = ui->tableVSTiUsed->item(index.row(), 1);
-        item->setText(vstiNames[selected+1]);
+        if (item)
+            item->setText(vstiNames[selected+1]);
 
-        InstrumentType type = static_cast<InstrumentType>(index.row());
+        InstrumentType type = static_cast<InstrumentType>(typeNo);
         synth->setUseVSTi(type, selected);
 
         // "Not used" also cancels the external MIDI out of that instrument
@@ -506,7 +522,10 @@ void VSTDirsDialog::setExtMidiOutSelected(const QString &deviceName)
     QModelIndexList indexList = selectedVstiRows();
     for (QModelIndex index : indexList)
     {
-        InstrumentType type = static_cast<InstrumentType>(index.row());
+        const int typeNo = vstiRowType(index.row());
+        if (typeNo < 0)
+            continue;
+        InstrumentType type = static_cast<InstrumentType>(typeNo);
         synth->setExtMidiOut(type, deviceName);
 
         // show what is really active (a busy/missing device falls back to internal)
@@ -518,6 +537,17 @@ void VSTDirsDialog::setExtMidiOutSelected(const QString &deviceName)
     synth->sendAllNotesOff();
 }
 
+
+// instrument strip type kept on the row (the rows are in strip order, not in type order); -1 = none
+int VSTDirsDialog::vstiRowType(int row)
+{
+    QTableWidgetItem *it = ui->tableVSTiUsed->item(row, 0);
+    if (!it)
+        return -1;
+    bool ok = false;
+    const int t = it->data(Qt::UserRole).toInt(&ok);
+    return ok ? t : -1;
+}
 
 QModelIndexList VSTDirsDialog::selectedVstiRows()
 {

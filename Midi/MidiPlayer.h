@@ -7,6 +7,11 @@
 #include "MidiSynthesizer.h"
 
 #include <QObject>
+#include <atomic>
+#include <deque>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 enum class PlayerState
 {
@@ -135,6 +140,8 @@ private:
     void sendAllSoundOff();
     void sendResetAllControllers(int ch);
     void sendResetAllControllers();
+    void releaseSustain();                                        // sustain / sostenuto pedal up on every channel
+    void deliverMidiIn(const std::vector<unsigned char> &msg);    // MIDI-in after the mixer filter (delayed or direct)
 
     int getNoteNumberToPlay(int ch, int defaultNote);
     void calculateUsedPort();
@@ -143,6 +150,7 @@ private:
     MidiSequencer *_midiSeq;
     MidiSequencer *_midiSeqTemp = nullptr;
     QMap<int, MidiOut*> _midiOuts;
+    MidiOut *openOut(int port);   // opened once; nullptr if the port cannot be opened
     MidiSynthesizer     *_midiSynth;
     RtMidiIn            *_midiIn = nullptr;
     Channel             _midiChannels[16];
@@ -159,8 +167,14 @@ private:
 
     QString _medleyId = "";
 
-    MidiEvent   _tempEvent, _midiInEvent;
+    MidiEvent   _tempEvent;
     MidiEvent*  _playingEventPtr = nullptr;
+    // sendEvent() is called from the sequencer, the MIDI-in callback, the delay queue and the UI: one at a time
+    std::recursive_mutex _sendMx;
+    // note number / port each sounding note was really played with (after transpose / lock kick-snare / bass octave),
+    // so its note-off matches even if those settings or the channel's program changed in between; -1 = not sounding
+    int _playedNote[16][128];
+    int _playedPort[16][128];
 
     bool    _ignoreExtMixer = true;
     bool    _lockDrum  = false;

@@ -114,7 +114,7 @@ public:
         const DWORD dev = BASS_GetDevice();
         BASS_DEVICEINFO di;
         if (dev != DWORD(-1) && BASS_GetDeviceInfo(dev, &di))
-            t << "Device    : #" << dev << "  " << QString::fromLocal8Bit(di.name ? di.name : "") << "\n";
+            t << "Device    : #" << dev << "  " << QString::fromUtf8(di.name ? di.name : "") << "\n";
         else
             t << "Device    : (none)\n";
         BASS_INFO bi;

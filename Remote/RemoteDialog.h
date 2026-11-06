@@ -7,6 +7,7 @@
 #include <vector>
 
 class QLabel;
+class QCheckBox;
 class QComboBox;
 class QPushButton;
 class RemoteServer;
@@ -43,6 +44,8 @@ private:
     QLabel       *lbHint;
     QComboBox    *cbIp;
     QPushButton  *btn;
+    QCheckBox    *chAuto;      // start with the program
+    QPushButton  *btnNew;      // new access code
 };
 
 #endif // REMOTEDIALOG_H

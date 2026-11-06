@@ -26,7 +26,7 @@ MapChannelDialog::MapChannelDialog(QWidget *parent, MidiPlayer *player) :
 
         QTableWidgetItem *itemPort = new QTableWidgetItem();
         int port = player->midiChannel()[i].port();
-        if (port == -1) {
+        if (port < 0 || port >= devices.size()) {   // -1 = synth (a port of a device that is gone: shown as synth)
             itemPort->setText(synthStr);
         } else {
             itemPort->setText((devices[port]));
@@ -74,10 +74,13 @@ void MapChannelDialog::setMapMidiOut(int port)
     for (QModelIndex index : indexList) {
         player->setMapChannelOutput(index.row(), port);
         QTableWidgetItem *item = ui->tableWidget->item(index.row(), 1);
-        if (port == -1) {
+        if (!item)
+            continue;
+        const int real = player->midiChannel()[index.row()].port();   // the port really used (opening may have failed)
+        if (real < 0 || real >= devices.size()) {
             item->setText(synthStr);
         } else {
-            item->setText(devices[port]);
+            item->setText(devices[real]);
         }
     }
 

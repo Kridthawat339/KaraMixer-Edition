@@ -16,7 +16,7 @@
   <property name="styleSheet">
    <string notr="true">#frame {
 	border: 1px solid rgb(224, 224, 224);
-	background-color: rgba(66, 66, 66);
+	background-color: rgb(66, 66, 66);
 }
 
 #frame * {

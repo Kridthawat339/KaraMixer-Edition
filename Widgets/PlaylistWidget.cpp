@@ -61,7 +61,9 @@ void PlaylistWidget::addSong(Song *song)
 
 void PlaylistWidget::updateDetail(int row, Song *song)
 {
-    ui->tableWidget->item(row, 2)->setText(song->detailWithoutIDType());
+    QTableWidgetItem *it = ui->tableWidget->item(row, 2);   // null for a row that does not exist (-1 / stale)
+    if (it && song)
+        it->setText(song->detailWithoutIDType());
 }
 
 int PlaylistWidget::rowCount()
@@ -87,14 +89,15 @@ void PlaylistWidget::setCurrentRow(int row)
 
 void PlaylistWidget::removeRow(int row)
 {
-    if (row >= ui->tableWidget->rowCount())
+    if (row < 0 || row >= ui->tableWidget->rowCount())
         return;
 
     ui->tableWidget->removeRow(row);
 
     for (int i=row; i<ui->tableWidget->rowCount(); i++)
     {
-        ui->tableWidget->item(i, 0)->setText(QString::number(i+1));
+        if (QTableWidgetItem *it = ui->tableWidget->item(i, 0))
+            it->setText(QString::number(i+1));
     }
 
     if (row == 0)
@@ -107,10 +110,10 @@ void PlaylistWidget::removeRow(int row)
 
 void PlaylistWidget::swapRow(int row, int toRow)
 {
-    if (row >= ui->tableWidget->rowCount())
+    if (row < 0 || row >= ui->tableWidget->rowCount())
         return;
 
-    if (toRow >= ui->tableWidget->rowCount())
+    if (toRow < 0 || toRow >= ui->tableWidget->rowCount())
         return;
 
     // row item

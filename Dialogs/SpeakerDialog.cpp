@@ -6,6 +6,7 @@
 
 #include <Config.h>
 #include "Dialogs/DialogHelper.h"
+#include "Midi/DevicePicker.h"
 
 #define ICON_SOUNDCARD  ":/Icons/SoundCard/sound-card.png"
 #define ICON_MIXER      ":/Icons/SoundCard/mixer.png"
@@ -116,6 +117,7 @@ void SpeakerDialog::setSpeaker(int number)
 
         settings.setArrayIndex(static_cast<int>(instType));   // saved by strip number, not by table row
         settings.setValue("Device", synth->device(instType));
+        settings.setValue("DeviceName", DevicePicker::stripDeviceName(synth->device(instType), MidiSynthesizer::audioDevices()));
         settings.setValue("Speaker", static_cast<int>(synth->speaker(instType)));
     }
 
@@ -160,7 +162,7 @@ void SpeakerDialog::setItems(int row)
     {
         int device = synth->device(t);
         iconDevice.addFile(ICON_SOUNDCARD);
-        nameDevice = (device == 0) ? "Default Audio Device" : deviceNames[device];
+        nameDevice = (device <= 0 || device >= deviceNames.count()) ? "Default Audio Device" : deviceNames[device];   // (a device that is gone: index past the list)
     }
 
     itemDevice->setIcon(iconDevice);

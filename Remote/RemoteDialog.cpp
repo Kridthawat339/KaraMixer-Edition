@@ -3,6 +3,7 @@
 #include "Remote/QrCode.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QLabel>
@@ -63,14 +64,21 @@ RemoteDialog::RemoteDialog(RemoteServer *srv, QWidget *parent)
     lay->setSpacing(10);
 
     QLabel *intro = new QLabel(tr("เปิดใช้งานแล้วใช้มือถือสแกน QR Code\n"
-                                  "หน้าจอโปรแกรมจะขึ้นบนมือถือ และแตะควบคุมได้"), this);
+                                  "หน้ามิกเซอร์จะขึ้นบนมือถือ: เฟเดอร์ / M (Mute) / S (Solo) ของทุกแทร็ก และ Master\n"
+                                  "ใช้ได้แม้หน้าต่างมิกเซอร์อยู่ด้านหลังโปรแกรมคาราโอเกะ (ไม่มีเมนูหรือหน้าต่างโผล่บนจอเครื่อง)"), this);
     intro->setAlignment(Qt::AlignCenter);
+    intro->setWordWrap(true);
     lay->addWidget(intro);
 
     QHBoxLayout *ipRow = new QHBoxLayout();
     ipRow->addWidget(new QLabel(tr("เครือข่าย (IP):"), this));
     cbIp = new QComboBox(this);
     cbIp->addItems(RemoteServer::localAddresses());
+    {   // the IP the link was made with last time
+        const int ix = cbIp->findText(RemoteServer::savedIp());
+        if (ix >= 0)
+            cbIp->setCurrentIndex(ix);
+    }
     ipRow->addWidget(cbIp, 1);
     lay->addLayout(ipRow);
 
@@ -90,9 +98,20 @@ RemoteDialog::RemoteDialog(RemoteServer *srv, QWidget *parent)
     btn = new QPushButton(this);
     lay->addWidget(btn);
 
+    // start with the program, with the same link every time (the access code and the port are kept)
+    chAuto = new QCheckBox(tr("เปิดการควบคุมผ่านมือถืออัตโนมัติทุกครั้งที่เปิดโปรแกรม"), this);
+    chAuto->setToolTip(tr("ติ๊กแล้วใช้ลิงก์/QR เดิมในมือถือได้ทุกครั้ง ไม่ต้องไปกดที่เครื่องบนเวที"));
+    chAuto->setChecked(RemoteServer::autoStartEnabled());
+    lay->addWidget(chAuto);
+
+    btnNew = new QPushButton(tr("สร้างรหัสใหม่ (ลิงก์/QR เดิมจะใช้ไม่ได้)"), this);
+    btnNew->setToolTip(tr("ใช้เมื่อไม่ต้องการให้ใครที่มีลิงก์เดิมควบคุมได้อีก"));
+    lay->addWidget(btnNew);
+
     lbHint = new QLabel(tr("มือถือและคอมพิวเตอร์ต้องอยู่ Wi-Fi/เครือข่ายเดียวกัน\n"
                            "ถ้า Windows ถามเรื่องไฟร์วอลล์ ให้กด อนุญาต (เครือข่ายส่วนตัว)\n"
-                           "ใครสแกน QR นี้ได้จะควบคุมโปรแกรมได้ จึงควรปิดเมื่อเลิกใช้"), this);
+                           "ใครมีลิงก์/QR นี้จะควบคุมโปรแกรมได้ ถ้าไม่ปลอดภัยให้กด สร้างรหัสใหม่ หรือปิดเมื่อเลิกใช้\n"
+                           "ปุ่ม ภาพจอ ในหน้ามือถือ = ดูภาพหน้าต่างโปรแกรมแบบเดิม (ปุ่ม MIX = กลับหน้ามิกเซอร์)"), this);
     lbHint->setAlignment(Qt::AlignCenter);
     lbHint->setWordWrap(true);
     QFont f = lbHint->font();
@@ -101,6 +120,15 @@ RemoteDialog::RemoteDialog(RemoteServer *srv, QWidget *parent)
     lay->addWidget(lbHint);
 
     connect(btn, &QPushButton::clicked, this, &RemoteDialog::toggle);
+    connect(chAuto, &QCheckBox::toggled, this, [this](bool on) {
+        RemoteServer::setAutoStartEnabled(on);
+        if (on && !server->isRunning())
+            toggle();                   // switched on: start it now as well
+    });
+    connect(btnNew, &QPushButton::clicked, this, [this]() {
+        server->newToken();
+        refresh();
+    });
     connect(cbIp, QOverload<int>::of(&QComboBox::activated), this, [this](int) {
         if (server->isRunning())
         {

@@ -23,6 +23,11 @@ class SynthMixerDialog : public QDialog
     Q_OBJECT
 
 public:
+    // Phone remote (Remote/RemoteServer): the mixer as JSON for the phone's mixer page, and one change coming back from it
+    QByteArray remoteStateJson();
+    QByteArray remoteMetersCsv();   // only the meter levels, for the phone page's fast meter feed
+    void remoteSet(const QMap<QString, QString> &p);
+    void setRemoteActive(bool on);
     explicit SynthMixerDialog(QWidget *parent = 0, MainWindow *mainWin = 0);//, MainWindow *mainWin = 0);
     ~SynthMixerDialog();
 
@@ -158,6 +163,9 @@ private:
     Qt::Edges edgesAt(const QPoint &pos) const;
     void updateMenuIcon();
     class MasterStrip *masterStrip = nullptr;
+    bool metersLive = false;   // a phone is connected: meters also run while the window is hidden
+    QList<InstrumentType> remoteStripOrder() const;   // the strips in the order the mixer shows them (phone page)
+    class QToolButton *btnSoloDrums = nullptr;   // "โซโล่กลอง": only the drum / percussion strips are heard (not saved)
     class QToolButton *chkLockDrum = nullptr;
     class QToolButton *chkLockSnare = nullptr;
     class QToolButton *chkLockBass = nullptr;

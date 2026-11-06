@@ -70,8 +70,10 @@ private:
     bool hiddenByUs = false;
     int delayMs = 3000;
     QStringList names;
+#ifdef _WIN32
     mutable DWORD cachePid = 0;
     mutable QString cacheExe;
+#endif
     QElapsedTimer awayClock;     // how long the karaoke program has not been in front
     bool awayRunning = false;
     QElapsedTimer lastAct;       // last click / key press in the karaoke program

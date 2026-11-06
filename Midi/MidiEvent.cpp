@@ -31,8 +31,12 @@ float MidiEvent::bpm()
         return 0;
     }
 
+    if (mData.size() < 3)
+        return 120.0f;      // broken tempo event: reading 3 bytes would run past the data
     unsigned char* buffer = (unsigned char*)mData.constData();
     int32_t midi_tempo = (buffer[0] << 16) | (buffer[1] << 8) | buffer[2];
+    if (midi_tempo <= 0)
+        return 120.0f;      // 0 us per beat: division by zero
     return (float)(60000000.0 / midi_tempo);
 }
 
@@ -60,18 +64,24 @@ void MidiEvent::setMetaType(int mNumber)
 
 void MidiEvent::setMessage(std::vector<unsigned char> *message)
 {
+    // a message shorter than its status needs (cut-off / odd device): at() threw std::out_of_range in the MIDI-in
+    // callback thread, which ends the program. Too short = ignored.
     if (message->size() > 0) {
-        switch(message->at(0) & 0xF0) {
+        const int st = message->at(0) & 0xF0;
+        const size_t need = (st == 0xC0 || st == 0xD0) ? 2 : (st >= 0x80 && st < 0xF0 ? 3 : 1);
+        if (message->size() < need)
+            return;
+        switch(st) {
             case 0x80:
                 eType = MidiEventType::NoteOff;
                 eChannel = message->at(0) & 0x0F;
-                eData1 = message->at(1);
-                eData2 = message->at(2);
+                eData1 = message->at(1) & 0x7F;
+                eData2 = message->at(2) & 0x7F;
                 break;
             case 0x90:
                 eChannel = message->at(0) & 0x0F;
-                eData1 = message->at(1);
-                eData2 = message->at(2);
+                eData1 = message->at(1) & 0x7F;
+                eData2 = message->at(2) & 0x7F;
                 if (eData2 != 0)
                     eType = MidiEventType::NoteOn;
                 else
@@ -80,24 +90,24 @@ void MidiEvent::setMessage(std::vector<unsigned char> *message)
             case 0xA0:
                 eType = MidiEventType::NoteAftertouch;
                 eChannel = message->at(0) & 0x0F;
-                eData1 = message->at(1);
-                eData2 = message->at(2);
+                eData1 = message->at(1) & 0x7F;
+                eData2 = message->at(2) & 0x7F;
                 break;
             case 0xB0:
                 eType = MidiEventType::Controller;
                 eChannel = message->at(0) & 0x0F;
-                eData1 = message->at(1);
-                eData2 = message->at(2);
+                eData1 = message->at(1) & 0x7F;
+                eData2 = message->at(2) & 0x7F;
                 break;
             case 0xC0:
                 eType = MidiEventType::ProgramChange;
                 eChannel = message->at(0) & 0x0F;
-                eData1 = message->at(1);
+                eData1 = message->at(1) & 0x7F;
                 break;
             case 0xD0:
                 eType = MidiEventType::ChannelAftertouch;
                 eChannel = message->at(0) & 0x0F;
-                eData1 = message->at(1);
+                eData1 = message->at(1) & 0x7F;
                 break;
             case 0xE0:
                 eType = MidiEventType::PitchBend;
