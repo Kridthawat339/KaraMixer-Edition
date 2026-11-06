@@ -1744,8 +1744,7 @@ void MainWindow::openConfigFile()
     applyConfigLive();
     // one message for both: a second tooltip would replace the MIDI-in notice at once
     QToolTip::showText(QCursor::pos(), tr("โหลดคอนฟิกเรียบร้อยแล้ว (ไม่ต้องรีสตาร์ท)")
-                       + (midiInImportNote.isEmpty() ? QString() : "
-" + midiInImportNote),
+                       + (midiInImportNote.isEmpty() ? QString() : "\n" + midiInImportNote),
                        synthMix, QRect(), midiInImportNote.isEmpty() ? 4000 : 8000);
 }
 
