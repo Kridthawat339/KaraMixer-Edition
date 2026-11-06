@@ -328,6 +328,16 @@ SynthMixerDialog::SynthMixerDialog(QWidget *parent, MainWindow *mainWin) : //, M
         // row, between the CPU / RAM monitor and "ตัดจูนกลอง". Not saved: it always starts off.
         btnSoloDrums = addChk(tr("โซโล่กลอง"), tr("เล่นเสียงเฉพาะชุดกลองและเพอร์คัชชั่นทั้งหมด เพื่อฟังทดสอบ  •  กดอีกครั้งเพื่อกลับมาเล่นทุกแทร็ก"));
         connect(btnSoloDrums, &QToolButton::clicked, this, [this](bool on) { synth->setDrumSolo(on); });
+        {   // the seven quick buttons are all as wide as the widest one
+            const QList<QToolButton *> quick = { btnSoloDrums, chkNoTune, chkLockBass, chkLockKick, chkLockSnare, chkLockDrum, btnDrumTune };
+            int w = 0;
+            for (QToolButton *b : quick)
+                w = qMax(w, b->sizeHint().width());
+            for (QToolButton *b : quick) {
+                b->setMinimumWidth(w);
+                b->setMaximumWidth(w);
+            }
+        }
         // tab row lines up with the columns below: tab 0 = left panel width, tab 1 starts where the strips start
         ui->horizontalLayout_4->setSpacing(6);
         ui->btnPreset0->setFixedWidth(78);

@@ -65,6 +65,15 @@ protected:
                 if (QFontMetrics(f).horizontalAdvance(txt) <= avail)
                     break;
             }
+            {   // a frame like the other buttons of the row
+                const bool dark = palette().color(QPalette::Window).lightness() < 128;
+                const QColor tc = palette().color(QPalette::Text);
+                QPainterPath box;
+                box.addRoundedRect(QRectF(0.5, 1.5, width() - 1, height() - 3), 6, 6);
+                p.fillPath(box, dark ? QColor(255, 255, 255, 14) : QColor(0, 0, 0, 14));
+                p.setPen(QPen(QColor(tc.red(), tc.green(), tc.blue(), 110), 1));
+                p.drawPath(box);
+            }
             p.setFont(f);
             p.setPen(palette().color(QPalette::Text));
             p.drawText(rect(), Qt::AlignCenter, txt);
