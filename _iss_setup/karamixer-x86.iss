@@ -14,16 +14,16 @@
 [Setup]
 AppId={{E92A4B7D-1C60-47F3-A8D5-6B0C3F9E5A18}
 AppName={#MyAppName}
-AppVersion=v.{#AppVersion} Pro
-AppVerName={#MyAppName} v.{#AppVersion} Pro
-VersionInfoVersion={#AppVersion}
+AppVersion=v.{#AppVersion}
+AppVerName={#MyAppName} v.{#AppVersion}
+VersionInfoVersion=4.0.2.0
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\KaraMixer Edition (32-bit)
 DefaultGroupName={#MyAppName} (32-bit)
 AllowNoIcons=yes
 LicenseFile=..\gpl-3.0.rtf
 OutputDir=..\dist
-OutputBaseFilename=KaraMixer-v{#AppVersion}-Pro-x86-setup
+OutputBaseFilename=KaraMixer-v{#AppVersion}-Free-x86-setup
 SetupIconFile=..\karamixer.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma
