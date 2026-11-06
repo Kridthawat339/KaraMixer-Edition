@@ -839,6 +839,42 @@ void MidiPlayer::sendEvent(MidiEvent e)
     emit sendedEvent(sent);
 }
 
+void MidiPlayer::onSeqFinished()
+{
+    if (_useMedley) {
+        if (_midiSeq->isSeqFinished() && (_midiSeqTemp != nullptr)) {
+            _midiSeq->deleteLater();
+            _midiSeq = _midiSeqTemp;
+            _midiSeqTemp = nullptr;
+
+            connect(_midiSeq, SIGNAL(playingEvent(MidiEvent)),
+                    this, SLOT(sendEvent(MidiEvent)), Qt::DirectConnection);
+            connect(_midiSeq, SIGNAL(bpmChanged(int)),
+                    this, SLOT(onSeqBpmChanged(int)), Qt::DirectConnection);
+            connect(_midiSeq, SIGNAL(finished()),
+                    this, SLOT(onSeqFinished()), Qt::DirectConnection);
+
+            _midiTranspose = _midiTransposeTemp;
+            _midiTransposeTemp = 0;
+
+            _midiSynth->compactSoundfont();
+            _midiSeq->start();
+
+            emit nextMedleyStarted();
+            emit nextMedleyAfterStarted();
+        } else if (_midiSeq->isSeqFinished() && (_midiSeqTemp == nullptr)) {
+            emit finished();
+        }
+    } else {
+        emit finished();
+    }
+}
+
+void MidiPlayer::onSeqBpmChanged(int bpm)
+{
+    emit bpmChanged(bpm);
+}
+
 void MidiPlayer::sendEventToDevices(MidiEvent evt)
 {
     MidiEvent *e = &evt;
