@@ -80,7 +80,7 @@ protected:
 
 private:
     static const int HIST = 40;
-    static const int MINW = 180;
+    static const int MINW = 120;
     QTimer timer;
     QVector<double> cpuHist, ramHist;
     double cpuNow = 0, ramNow = 0, usedGb = 0, totalGb = 0;
