@@ -51,10 +51,25 @@ protected:
 
     void paintEvent(QPaintEvent *) override
     {
-        if (width() < MINW)         // too narrow for the two tiles to show a value next to the label: a blank gap, not
-            return;                 // a squeezed, cut-off pair of tiles
+        if (width() < COMPACTW)     // too narrow even for the one-line text: a blank gap
+            return;
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
+        if (width() < MINW) {       // too narrow for the two tiles: one line of text, "CPU 3%  RAM 3%", font shrunk to fit
+            const QString txt = QStringLiteral("CPU %1%   RAM %2%").arg(qRound(cpuNow * 100)).arg(qRound(ramNow * 100));
+            QFont f = font();
+            f.setBold(true);
+            const int avail = width() - 6;
+            for (int pt = 9; pt >= 6; pt--) {
+                f.setPointSize(pt);
+                if (QFontMetrics(f).horizontalAdvance(txt) <= avail)
+                    break;
+            }
+            p.setFont(f);
+            p.setPen(palette().color(QPalette::Text));
+            p.drawText(rect(), Qt::AlignCenter, txt);
+            return;
+        }
         const int gap = 8;
         const int cw = (width() - gap) / 2;
         const QRectF cpuR(0.5, 1.5, cw - 1, height() - 3);
@@ -80,7 +95,8 @@ protected:
 
 private:
     static const int HIST = 40;
-    static const int MINW = 120;
+    static const int MINW = 160;
+    static const int COMPACTW = 90;
     QTimer timer;
     QVector<double> cpuHist, ramHist;
     double cpuNow = 0, ramNow = 0, usedGb = 0, totalGb = 0;
